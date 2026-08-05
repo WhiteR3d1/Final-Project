@@ -104,6 +104,50 @@ export async function moveCardAction(cardId: string, direction: "left" | "right"
   revalidatePath(`/board/${card.list.boardId}`);
 }
 
+export async function reorderCardAction(
+  cardId: string,
+  targetListId: string,
+  newPosition: number
+) {
+  const user = await getCurrentUser();
+
+  const card = await prisma.card.findUniqueOrThrow({
+    where: { id: cardId },
+    include: { list: true },
+  });
+
+  const access = await assertBoardAccess(card.list.boardId, user.id);
+  if (!access) return;
+
+  const targetList = await prisma.list.findUniqueOrThrow({
+    where: { id: targetListId },
+  });
+
+  if (targetList.boardId !== card.list.boardId) return;
+
+  const listChanged = targetListId !== card.listId;
+
+  await prisma.card.update({
+    where: { id: cardId },
+    data: { listId: targetListId, position: newPosition },
+  });
+
+  if (listChanged) {
+    await prisma.activity.create({
+      data: {
+        boardId: card.list.boardId,
+        cardId: card.id,
+        userId: user.id,
+        type: ActivityType.CARD_MOVED,
+        message: `${user.name ?? user.email} moved "${card.title}" to ${targetList.name}`,
+        data: { fromListId: card.listId, toListId: targetListId },
+      },
+    });
+  }
+
+  revalidatePath(`/board/${card.list.boardId}`);
+}
+
 export async function createChecklistAction(formData: FormData) {
   const cardId = formData.get("cardId");
   if (typeof cardId !== "string") return;

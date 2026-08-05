@@ -1,17 +1,21 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useActionState } from "react";
 import { login } from "@/app/actions/auth";
 
 export default function LoginPage() {
   const [state, action, pending] = useActionState(login, undefined);
+  const searchParams = useSearchParams();
+  const next = searchParams.get("next") ?? "";
 
   return (
     <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center px-6 py-10">
       <h1 className="mb-6 text-xl font-semibold">เข้าสู่ระบบ</h1>
 
       <form action={action} className="flex flex-col gap-4">
+        <input type="hidden" name="next" value={next} />
         <div>
           <label htmlFor="email" className="mb-1 block text-sm text-zinc-600 dark:text-zinc-400">
             อีเมล
@@ -55,7 +59,10 @@ export default function LoginPage() {
 
       <p className="mt-4 text-sm text-zinc-500">
         ยังไม่มีบัญชี?{" "}
-        <Link href="/signup" className="underline">
+        <Link
+          href={next ? `/signup?next=${encodeURIComponent(next)}` : "/signup"}
+          className="underline"
+        >
           สมัครสมาชิก
         </Link>
       </p>

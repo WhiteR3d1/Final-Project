@@ -17,6 +17,14 @@ export type AuthFormState =
     }
   | undefined;
 
+function resolveNextPath(formData: FormData) {
+  const next = formData.get("next");
+  if (typeof next === "string" && next.startsWith("/") && !next.startsWith("//")) {
+    return next;
+  }
+  return "/";
+}
+
 const SignupFormSchema = z.object({
   name: z.string().min(2, { error: "ชื่ออย่างน้อย 2 ตัวอักษร" }).trim(),
   email: z.email({ error: "อีเมลไม่ถูกต้อง" }).trim(),
@@ -51,7 +59,7 @@ export async function signup(
   });
 
   await createSession(user.id);
-  redirect("/");
+  redirect(resolveNextPath(formData));
 }
 
 const LoginFormSchema = z.object({
@@ -85,7 +93,7 @@ export async function login(
   }
 
   await createSession(user.id);
-  redirect("/");
+  redirect(resolveNextPath(formData));
 }
 
 export async function logout() {

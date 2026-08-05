@@ -1,0 +1,206 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String         @id @default(cuid())
+  email        String         @unique
+  name         String?
+  image        String?
+  passwordHash String?
+  createdAt    DateTime       @default(now())
+  ownedBoards  Board[]        @relation("BoardOwner")
+  memberships  BoardMember[]
+  cardsCreated Card[]         @relation("CardCreator")
+  assignments  CardAssignee[]
+  comments     Comment[]
+  activities   Activity[]
+}
+
+model Board {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  color       String?
+  ownerId     String
+  owner       User     @relation("BoardOwner", fields: [ownerId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  lists      List[]
+  labels     Label[]
+  members    BoardMember[]
+  invites    BoardInvite[]
+  activities Activity[]
+}
+
+enum BoardRole {
+  EDITOR
+  VIEWER
+}
+
+// owner ไม่ต้องมีแถวใน BoardMember — สิทธิ์เต็มมาจาก Board.ownerId ตรง ๆ
+// การแชร์บอร์ด = เพิ่มแถวที่นี่ให้ user อื่น
+model BoardMember {
+  id       String    @id @default(cuid())
+  boardId  String
+  userId   String
+  role     BoardRole @default(EDITOR)
+  joinedAt DateTime  @default(now())
+
+  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([boardId, userId])
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+}
+
+// invite by email ก่อนอีกฝ่ายจะมี account/ยืนยันตัวตน
+model BoardInvite {
+  id        String       @id @default(cuid())
+  boardId   String
+  email     String
+  role      BoardRole    @default(EDITOR)
+  token     String       @unique
+  status    InviteStatus @default(PENDING)
+  createdAt DateTime     @default(now())
+  expiresAt DateTime
+
+  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+}
+
+model List {
+  id       String  @id @default(cuid())
+  boardId  String
+  name     String
+  position Float
+  color    String?
+
+  board Board  @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  cards Card[]
+}
+
+model Card {
+  id          String    @id @default(cuid())
+  listId      String
+  title       String
+  description String?
+  position    Float
+  dueDate     DateTime?
+  isCompleted Boolean   @default(false)
+  createdById String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  list       List           @relation(fields: [listId], references: [id], onDelete: Cascade)
+  createdBy  User           @relation("CardCreator", fields: [createdById], references: [id])
+  labels     CardLabel[]
+  assignees  CardAssignee[]
+  checklists Checklist[]
+  comments   Comment[]
+  activities Activity[]
+}
+
+model Label {
+  id      String @id @default(cuid())
+  boardId String
+  name    String
+  color   String
+
+  board Board       @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  cards CardLabel[]
+}
+
+// join table ระหว่าง Card กับ Label (many-to-many)
+model CardLabel {
+  cardId  String
+  labelId String
+
+  card  Card  @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  label Label @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@id([cardId, labelId])
+}
+
+// join table ระหว่าง Card กับ User (ใครถูก assign ให้การ์ดไหนบ้าง)
+model CardAssignee {
+  cardId String
+  userId String
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([cardId, userId])
+}
+
+model Checklist {
+  id     String @id @default(cuid())
+  cardId String
+  title  String
+  position Float
+
+  card  Card            @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  items ChecklistItem[]
+}
+
+model ChecklistItem {
+  id          String  @id @default(cuid())
+  checklistId String
+  content     String
+  position    Float
+  isCompleted Boolean @default(false)
+
+  checklist Checklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  cardId    String
+  userId    String
+  content   String
+  createdAt DateTime @default(now())
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum ActivityType {
+  BOARD_CREATED
+  CARD_CREATED
+  CARD_MOVED
+  CARD_COMPLETED
+  CHECKLIST_ITEM_COMPLETED
+  MEMBER_INVITED
+  MEMBER_JOINED
+  COMMENT_ADDED
+}
+
+model Activity {
+  id        String       @id @default(cuid())
+  boardId   String
+  userId    String
+  type      ActivityType
+  message   String
+  data      Json?
+  createdAt DateTime     @default(now())
+
+  board  Board   @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user   User    @relation(fields: [userId], references: [id])
+  card   Card?   @relation(fields: [cardId], references: [id])
+  cardId String?
+}

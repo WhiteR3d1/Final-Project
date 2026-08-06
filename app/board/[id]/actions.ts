@@ -7,6 +7,90 @@ import { getCurrentUser } from "@/lib/dal";
 import { assertBoardAccess } from "@/lib/board-access";
 import { ActivityType, InviteStatus } from "@/app/generated/prisma/enums";
 
+export async function createListAction(formData: FormData) {
+  const boardId = formData.get("boardId");
+  const name = formData.get("name");
+
+  if (typeof boardId !== "string" || typeof name !== "string" || !name.trim()) {
+    return;
+  }
+
+  const user = await getCurrentUser();
+  const access = await assertBoardAccess(boardId, user.id);
+  if (!access) return;
+
+  const lastList = await prisma.list.findFirst({
+    where: { boardId },
+    orderBy: { position: "desc" },
+  });
+
+  await prisma.list.create({
+    data: {
+      boardId,
+      name: name.trim(),
+      position: (lastList?.position ?? 0) + 1,
+    },
+  });
+
+  revalidatePath(`/board/${boardId}`);
+}
+
+export async function renameListAction(listId: string, name: string) {
+  if (!name.trim()) return;
+
+  const user = await getCurrentUser();
+
+  const list = await prisma.list.findUniqueOrThrow({ where: { id: listId } });
+  const access = await assertBoardAccess(list.boardId, user.id);
+  if (!access) return;
+
+  await prisma.list.update({
+    where: { id: listId },
+    data: { name: name.trim() },
+  });
+
+  revalidatePath(`/board/${list.boardId}`);
+}
+
+export async function deleteListAction(formData: FormData) {
+  const listId = formData.get("listId");
+  if (typeof listId !== "string") return;
+
+  const user = await getCurrentUser();
+
+  const list = await prisma.list.findUniqueOrThrow({ where: { id: listId } });
+  const access = await assertBoardAccess(list.boardId, user.id);
+  if (!access) return;
+
+  await prisma.list.delete({ where: { id: listId } });
+
+  await prisma.activity.create({
+    data: {
+      boardId: list.boardId,
+      userId: user.id,
+      type: ActivityType.LIST_DELETED,
+      message: `${user.name ?? user.email} deleted list "${list.name}"`,
+    },
+  });
+
+  revalidatePath(`/board/${list.boardId}`);
+}
+
+export async function reorderListAction(listId: string, newPosition: number) {
+  const user = await getCurrentUser();
+
+  const list = await prisma.list.findUniqueOrThrow({ where: { id: listId } });
+  const access = await assertBoardAccess(list.boardId, user.id);
+  if (!access) return;
+
+  await prisma.list.update({
+    where: { id: listId },
+    data: { position: newPosition },
+  });
+
+  revalidatePath(`/board/${list.boardId}`);
+}
+
 export async function createCardAction(formData: FormData) {
   const listId = formData.get("listId");
   const title = formData.get("title");
@@ -148,6 +232,81 @@ export async function reorderCardAction(
   revalidatePath(`/board/${card.list.boardId}`);
 }
 
+export async function updateCardAction(formData: FormData) {
+  const cardId = formData.get("cardId");
+  const title = formData.get("title");
+  const description = formData.get("description");
+  const priorityId = formData.get("priorityId");
+  const dueDate = formData.get("dueDate");
+
+  if (typeof cardId !== "string" || typeof title !== "string" || !title.trim()) {
+    return;
+  }
+
+  const user = await getCurrentUser();
+
+  const card = await prisma.card.findUniqueOrThrow({
+    where: { id: cardId },
+    include: { list: true },
+  });
+
+  const boardId = card.list.boardId;
+  const access = await assertBoardAccess(boardId, user.id);
+  if (!access) return;
+
+  await prisma.card.update({
+    where: { id: cardId },
+    data: {
+      title: title.trim(),
+      description:
+        typeof description === "string" && description.trim() ? description.trim() : null,
+      priorityId: typeof priorityId === "string" && priorityId ? priorityId : null,
+      dueDate: typeof dueDate === "string" && dueDate ? new Date(dueDate) : null,
+    },
+  });
+
+  await prisma.activity.create({
+    data: {
+      boardId,
+      cardId,
+      userId: user.id,
+      type: ActivityType.CARD_UPDATED,
+      message: `${user.name ?? user.email} updated card "${title.trim()}"`,
+    },
+  });
+
+  revalidatePath(`/board/${boardId}`);
+}
+
+export async function deleteCardAction(formData: FormData) {
+  const cardId = formData.get("cardId");
+  if (typeof cardId !== "string") return;
+
+  const user = await getCurrentUser();
+
+  const card = await prisma.card.findUniqueOrThrow({
+    where: { id: cardId },
+    include: { list: true },
+  });
+
+  const boardId = card.list.boardId;
+  const access = await assertBoardAccess(boardId, user.id);
+  if (!access) return;
+
+  await prisma.card.delete({ where: { id: cardId } });
+
+  await prisma.activity.create({
+    data: {
+      boardId,
+      userId: user.id,
+      type: ActivityType.CARD_DELETED,
+      message: `${user.name ?? user.email} deleted card "${card.title}"`,
+    },
+  });
+
+  revalidatePath(`/board/${boardId}`);
+}
+
 export async function createChecklistAction(formData: FormData) {
   const cardId = formData.get("cardId");
   if (typeof cardId !== "string") return;
@@ -280,6 +439,86 @@ export async function createLabelAction(formData: FormData) {
   });
 
   revalidatePath(`/board/${boardId}`);
+}
+
+export async function createPriorityAction(formData: FormData) {
+  const boardId = formData.get("boardId");
+  const name = formData.get("name");
+  const color = formData.get("color");
+
+  if (
+    typeof boardId !== "string" ||
+    typeof name !== "string" ||
+    !name.trim() ||
+    typeof color !== "string" ||
+    !color
+  ) {
+    return;
+  }
+
+  const user = await getCurrentUser();
+  const access = await assertBoardAccess(boardId, user.id);
+  if (!access) return;
+
+  const lastPriority = await prisma.priority.findFirst({
+    where: { boardId },
+    orderBy: { order: "desc" },
+  });
+
+  await prisma.priority.create({
+    data: {
+      boardId,
+      name: name.trim(),
+      color,
+      order: (lastPriority?.order ?? 0) + 1,
+    },
+  });
+
+  revalidatePath(`/board/${boardId}`);
+}
+
+export async function updatePriorityAction(formData: FormData) {
+  const priorityId = formData.get("priorityId");
+  const name = formData.get("name");
+  const color = formData.get("color");
+
+  if (
+    typeof priorityId !== "string" ||
+    typeof name !== "string" ||
+    !name.trim() ||
+    typeof color !== "string" ||
+    !color
+  ) {
+    return;
+  }
+
+  const user = await getCurrentUser();
+
+  const priority = await prisma.priority.findUniqueOrThrow({ where: { id: priorityId } });
+  const access = await assertBoardAccess(priority.boardId, user.id);
+  if (!access) return;
+
+  await prisma.priority.update({
+    where: { id: priorityId },
+    data: { name: name.trim(), color },
+  });
+
+  revalidatePath(`/board/${priority.boardId}`);
+}
+
+export async function deletePriorityAction(formData: FormData) {
+  const priorityId = formData.get("priorityId");
+  if (typeof priorityId !== "string") return;
+
+  const user = await getCurrentUser();
+
+  const priority = await prisma.priority.findUniqueOrThrow({ where: { id: priorityId } });
+  const access = await assertBoardAccess(priority.boardId, user.id);
+  if (!access) return;
+
+  await prisma.priority.delete({ where: { id: priorityId } });
+
+  revalidatePath(`/board/${priority.boardId}`);
 }
 
 export async function toggleCardLabelAction(formData: FormData) {

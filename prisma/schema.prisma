@@ -39,6 +39,7 @@ model Board {
 
   lists      List[]
   labels     Label[]
+  priorities Priority[]
   members    BoardMember[]
   invites    BoardInvite[]
   activities Activity[]
@@ -103,12 +104,14 @@ model Card {
   position    Float
   dueDate     DateTime?
   isCompleted Boolean   @default(false)
+  priorityId  String?
   createdById String
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   list       List           @relation(fields: [listId], references: [id], onDelete: Cascade)
   createdBy  User           @relation("CardCreator", fields: [createdById], references: [id])
+  priority   Priority?      @relation(fields: [priorityId], references: [id], onDelete: SetNull)
   labels     CardLabel[]
   assignees  CardAssignee[]
   checklists Checklist[]
@@ -124,6 +127,18 @@ model Label {
 
   board Board       @relation(fields: [boardId], references: [id], onDelete: Cascade)
   cards CardLabel[]
+}
+
+// priority กำหนดเองต่อบอร์ด (ชื่อ+สีตั้งเอง) การ์ดผูกได้ทีละ 1 priority
+model Priority {
+  id      String @id @default(cuid())
+  boardId String
+  name    String
+  color   String
+  order   Int
+
+  board Board  @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  cards Card[]
 }
 
 // join table ระหว่าง Card กับ Label (many-to-many)
@@ -184,6 +199,9 @@ enum ActivityType {
   CARD_CREATED
   CARD_MOVED
   CARD_COMPLETED
+  CARD_UPDATED
+  CARD_DELETED
+  LIST_DELETED
   CHECKLIST_ITEM_COMPLETED
   MEMBER_INVITED
   MEMBER_JOINED

@@ -278,6 +278,33 @@ export async function updateCardAction(formData: FormData) {
   revalidatePath(`/board/${boardId}`);
 }
 
+export async function setCardPriorityAction(formData: FormData) {
+  const cardId = formData.get("cardId");
+  const priorityId = formData.get("priorityId");
+
+  if (typeof cardId !== "string" || typeof priorityId !== "string") return;
+
+  const user = await getCurrentUser();
+
+  const card = await prisma.card.findUniqueOrThrow({
+    where: { id: cardId },
+    include: { list: true },
+  });
+
+  const boardId = card.list.boardId;
+  const access = await assertBoardAccess(boardId, user.id);
+  if (!access) return;
+
+  const nextPriorityId = card.priorityId === priorityId ? null : priorityId;
+
+  await prisma.card.update({
+    where: { id: cardId },
+    data: { priorityId: nextPriorityId },
+  });
+
+  revalidatePath(`/board/${boardId}`);
+}
+
 export async function deleteCardAction(formData: FormData) {
   const cardId = formData.get("cardId");
   if (typeof cardId !== "string") return;

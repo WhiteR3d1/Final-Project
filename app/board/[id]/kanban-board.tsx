@@ -29,6 +29,7 @@ import {
   reorderListAction,
   createCardAction,
   updateCardAction,
+  setCardPriorityAction,
   deleteCardAction,
   createChecklistAction,
   addChecklistItemAction,
@@ -523,17 +524,38 @@ function SortableCard({
             </button>
           </div>
 
-          {card.priority && (
-            <span
-              className="mt-1.5 ml-6 inline-flex w-fit items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
-              style={{ backgroundColor: `${card.priority.color}22`, color: card.priority.color }}
-            >
-              <span
-                className="h-1.5 w-1.5 rounded-full"
-                style={{ backgroundColor: card.priority.color }}
-              />
-              {card.priority.name}
-            </span>
+          {boardPriorities.length > 0 && (
+            <div className="mt-1.5 ml-6 flex flex-wrap items-center gap-1">
+              {boardPriorities.map((priority) => {
+                const isActive = card.priorityId === priority.id;
+                return (
+                  <form key={priority.id} action={setCardPriorityAction}>
+                    <input type="hidden" name="cardId" value={card.id} />
+                    <input type="hidden" name="priorityId" value={priority.id} />
+                    <button
+                      type="submit"
+                      title={isActive ? `เอา priority "${priority.name}" ออก` : `ตั้ง priority เป็น "${priority.name}"`}
+                      style={
+                        isActive
+                          ? { backgroundColor: `${priority.color}22`, color: priority.color }
+                          : undefined
+                      }
+                      className={
+                        isActive
+                          ? "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                          : "inline-flex items-center gap-1 rounded-full border border-dashed border-zinc-300 px-1.5 py-0.5 text-[10px] text-zinc-400 hover:border-zinc-400 dark:border-zinc-600"
+                      }
+                    >
+                      <span
+                        className="h-1.5 w-1.5 rounded-full"
+                        style={{ backgroundColor: isActive ? priority.color : "transparent", border: isActive ? undefined : `1px solid ${priority.color}` }}
+                      />
+                      {priority.name}
+                    </button>
+                  </form>
+                );
+              })}
+            </div>
           )}
 
           {(items.length > 0 || card.dueDate) && (

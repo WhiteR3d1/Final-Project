@@ -19,7 +19,7 @@
 | UI | React 19, Tailwind CSS 4 |
 | Database | PostgreSQL ผ่าน Prisma ORM 7 (แนะนำ [Neon](https://neon.tech) แบบ serverless) |
 | Drag & Drop | @dnd-kit |
-| Auth | session cookie เซ็นด้วย `jose` + รหัสผ่านแฮชด้วย `bcryptjs` (ดู `lib/session.ts`, `lib/dal.ts`) |
+| Auth | NextAuth v5 (Auth.js) แบบ Credentials + JWT session, รหัสผ่านแฮชด้วย `bcryptjs` (ดู `auth.ts`, `auth.config.ts`, `lib/dal.ts`) |
 
 > โปรเจกต์นี้ใช้ Next.js เวอร์ชันที่มี breaking changes จากที่ AI เคยเทรนมา — ถ้าจะแก้โค้ดในนี้ด้วย AI coding agent ให้อ่าน `AGENTS.md` ก่อน
 
@@ -49,7 +49,11 @@ cp .env.example .env
 แล้วแก้ไข `.env` ให้มี 2 ค่านี้:
 
 - `DATABASE_URL` — connection string ของ PostgreSQL (สมัครฟรีที่ [neon.tech](https://neon.tech) หรือรัน `npx create-db` เพื่อสร้างฐานข้อมูล Prisma Postgres ให้อัตโนมัติ)
-- `SESSION_SECRET` — ค่าสุ่มสำหรับเซ็น session cookie เช่นสุ่มด้วยคำสั่ง:
+- `AUTH_SECRET` — ค่าสุ่มที่ NextAuth ใช้เข้ารหัส session JWT สร้างได้ด้วยคำสั่ง:
+  ```bash
+  npx auth secret
+  ```
+  หรือสุ่มเองด้วย:
   ```bash
   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
   ```
@@ -96,17 +100,22 @@ npm run dev
 ## โครงสร้างโปรเจกต์ (คร่าวๆ)
 
 ```
+auth.ts             # NextAuth instance หลัก (Credentials provider + bcrypt + Prisma)
+auth.config.ts      # config ส่วนที่ปลอดภัยกับทุก runtime ใช้ร่วมกับ proxy.ts
+proxy.ts            # กันหน้าที่ต้องล็อกอิน (Next.js 16 เปลี่ยนชื่อจาก middleware.ts)
 app/
+  api/auth/[...nextauth]/  # route handler ของ NextAuth
   actions/         # server actions ที่ใช้ข้ามหลายหน้า (auth, สร้างบอร์ด)
   board/[id]/       # หน้าบอร์ดเดี่ยว + server actions ของ list/card/label/priority
   login/ signup/    # หน้าล็อกอิน/สมัครสมาชิก
   invite/           # หน้ารับคำเชิญเข้าร่วมบอร์ด
   generated/prisma/ # Prisma Client ที่ generate ไว้ (ห้าม commit, อยู่ใน .gitignore)
 lib/
-  session.ts        # เซ็น/ตรวจ session cookie
-  dal.ts             # ดึงข้อมูล user ปัจจุบันจาก session
+  dal.ts             # ดึง user ปัจจุบันจาก session (ประตูเดียวของทั้งแอป)
   board-access.ts    # ตรวจสิทธิ์เข้าถึงบอร์ด (owner/member)
   prisma.ts           # Prisma Client instance
+types/
+  next-auth.d.ts     # เพิ่ม field id เข้าไปใน type ของ Session
 prisma/
   schema.prisma      # นิยามโมเดลฐานข้อมูลทั้งหมด
   migrations/         # ประวัติ migration
@@ -115,4 +124,4 @@ prisma/
 
 ## Deploy
 
-โปรเจกต์นี้ deploy ขึ้น [Vercel](https://vercel.com) ได้ตรงๆ (เข้ากันได้ดีกับ Next.js) — อย่าลืมตั้งค่า `DATABASE_URL` และ `SESSION_SECRET` เป็น environment variables บนแพลตฟอร์มที่ deploy ด้วย
+โปรเจกต์นี้ deploy ขึ้น [Vercel](https://vercel.com) ได้ตรงๆ (เข้ากันได้ดีกับ Next.js) — อย่าลืมตั้งค่า `DATABASE_URL` และ `AUTH_SECRET` เป็น environment variables บนแพลตฟอร์มที่ deploy ด้วย

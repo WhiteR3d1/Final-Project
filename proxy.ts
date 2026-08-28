@@ -1,29 +1,32 @@
-import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { decrypt } from "@/lib/session";
+import NextAuth from "next-auth";
+import { NextResponse } from "next/server";
+import { authConfig } from "@/auth.config";
+
+// ใช้ instance แยกที่ไม่มี Credentials provider — proxy แค่ต้องอ่าน session cookie
+// ไม่ต้องแตะ database ตรงนี้ (ดูหมายเหตุใน auth.config.ts)
+const { auth } = NextAuth(authConfig);
 
 const publicRoutes = ["/login", "/signup"];
 
-export default async function proxy(req: NextRequest) {
+// เช็คแบบ optimistic เท่านั้น — การกันสิทธิ์ของจริงอยู่ที่ lib/dal.ts + lib/board-access.ts
+export default auth((req) => {
   const path = req.nextUrl.pathname;
   const isPublicRoute = publicRoutes.includes(path);
+  const isLoggedIn = Boolean(req.auth?.user?.id);
 
-  const cookie = (await cookies()).get("session")?.value;
-  const session = await decrypt(cookie);
-
-  if (!isPublicRoute && !session?.userId) {
+  if (!isPublicRoute && !isLoggedIn) {
     const loginUrl = new URL("/login", req.nextUrl);
     loginUrl.searchParams.set("next", path);
     return NextResponse.redirect(loginUrl);
   }
 
-  if (isPublicRoute && session?.userId) {
+  if (isPublicRoute && isLoggedIn) {
     return NextResponse.redirect(new URL("/", req.nextUrl));
   }
 
   return NextResponse.next();
-}
+});
 
 export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|.*\\.png$).*)"],
+  matcher: ["/((?!api|_next/static|_next/image|.*\.png$).*)"],
 };

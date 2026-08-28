@@ -1,19 +1,22 @@
 import "server-only";
 import { cache } from "react";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { decrypt } from "./session";
+import { auth } from "@/auth";
 import { prisma } from "./prisma";
 
+/**
+ * แหล่งความจริงเดียวของ "ตอนนี้ใครล็อกอินอยู่"
+ * ทุก Server Action / page ที่ต้องรู้ตัวตนผู้ใช้ ให้เรียกผ่านสองฟังก์ชันนี้เท่านั้น
+ * ห้ามอ่าน cookie หรือเรียก auth() ตรง ๆ จากที่อื่น
+ */
 export const verifySession = cache(async () => {
-  const cookieStore = await cookies();
-  const session = await decrypt(cookieStore.get("session")?.value);
+  const session = await auth();
 
-  if (!session?.userId) {
+  if (!session?.user?.id) {
     redirect("/login");
   }
 
-  return { userId: session.userId };
+  return { userId: session.user.id };
 });
 
 export const getCurrentUser = cache(async () => {

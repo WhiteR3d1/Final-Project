@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useActionState } from "react";
+import { Suspense, useActionState } from "react";
 import { signup } from "@/app/actions/auth";
 
-export default function SignupPage() {
+function SignupForm() {
   const [state, action, pending] = useActionState(signup, undefined);
   const searchParams = useSearchParams();
   const next = searchParams.get("next") ?? "";
@@ -81,5 +81,14 @@ export default function SignupPage() {
         </Link>
       </p>
     </div>
+  );
+}
+
+// useSearchParams() บังคับให้ต้องมี Suspense คั่น ไม่งั้น next build จะ prerender หน้านี้ไม่ผ่าน
+export default function SignupPage() {
+  return (
+    <Suspense>
+      <SignupForm />
+    </Suspense>
   );
 }

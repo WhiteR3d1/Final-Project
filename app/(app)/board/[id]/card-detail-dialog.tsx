@@ -19,6 +19,7 @@ import {
   toggleChecklistItemAction,
   updateCardAction,
 } from "./actions";
+import { CardAttachments } from "./card-attachments";
 import { CardMoveButtons } from "./card-move-buttons";
 import type { CardWithRelations } from "./types";
 
@@ -211,6 +212,9 @@ export function CardDetailDialog({
               ))
             )}
           </section>
+
+          {/* ---------- ไฟล์แนบ ---------- */}
+          <CardAttachments cardId={card.id} attachments={card.attachments} canEdit={canEdit} />
 
           {/* ---------- คอมเมนต์ ---------- */}
           <section>

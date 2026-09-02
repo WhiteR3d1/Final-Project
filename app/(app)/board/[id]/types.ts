@@ -10,6 +10,7 @@ export type ListWithCards = Prisma.ListGetPayload<{
         labels: { include: { label: true } };
         assignees: { include: { user: true } };
         priority: true;
+        attachments: true;
       };
     };
   };

@@ -22,6 +22,7 @@
 | แฮชรหัสผ่าน | `bcryptjs` | |
 | Validation | **Zod 4** | ใช้ `z.flattenError()` กับฟอร์ม |
 | Drag & drop | `@dnd-kit` (core + sortable) | |
+| ไฟล์แนบ | `@vercel/blob` | เก็บไฟล์ที่ผู้ใช้อัปโหลดในการ์ด ต้องมี `BLOB_READ_WRITE_TOKEN` |
 
 **ห้ามเพิ่ม dependency ใหม่โดยไม่ถามก่อน** โดยเฉพาะ state management, component library
 หรือ data-fetching library — โปรเจกต์นี้ตั้งใจใช้ Server Components + Server Actions ล้วน
@@ -54,7 +55,8 @@ app/
   globals.css                 # design token ทั้งระบบ (ดูหัวข้อ UI ด้านล่าง)
   login/page.tsx              # ฟอร์มล็อกอิน (client component + useActionState)
   signup/page.tsx             # ฟอร์มสมัครสมาชิก
-  invite/[token]/             # หน้ารับคำเชิญเข้าบอร์ด + action ตอบรับ
+  invite/[token]/             # หน้ารับคำเชิญ — รับได้ทั้ง BoardInvite (รายอีเมล)
+                              # และ BoardShareLink (ลิงก์ทั่วไป) ผ่าน path เดียวกัน
   api/auth/[...nextauth]/     # route handler ของ NextAuth (re-export handlers เฉย ๆ)
   actions/
     auth.ts                   # server actions: signup / login / logout
@@ -67,14 +69,17 @@ app/
     calendar/page.tsx         # ปฏิทินกำหนดส่ง (?m=, ?board=) → "/calendar"
     board/[id]/
       page.tsx                # หน้าบอร์ด (server component ดึงข้อมูลเอง)
-      actions.ts              # server actions ของ list/card/label/priority/invite ทั้งหมด
+      actions.ts              # server actions ของ list/card/label/priority/invite/
+                              # ไฟล์แนบ/ลิงก์แชร์ ทั้งหมด
       types.ts                # ListWithCards / CardWithRelations ใช้ร่วมกันทั้งโฟลเดอร์
       kanban-board.tsx        # client — drag & drop (@dnd-kit) + ฟิลเตอร์ + คุมว่าเปิดการ์ดไหน
       board-card.tsx          # client — การ์ดแบบกระชับบนคอลัมน์
       card-detail-dialog.tsx  # client — modal รายละเอียดการ์ด (แก้ทุกอย่างที่นี่)
       card-create-dialog.tsx  # client — modal เพิ่มการ์ด (ชื่อ/รายละเอียด/กำหนดส่ง/priority)
       list-dialog.tsx         # client — modal สร้าง+แก้ไขคอลัมน์ (ชื่อ/สี/คำอธิบาย)
-      board-settings-dialog.tsx # client — modal ตั้งค่าบอร์ด (label / priority / เชิญสมาชิก)
+      board-settings-dialog.tsx # client — modal ตั้งค่าบอร์ด (ข้อมูลบอร์ด / label / priority / เชิญสมาชิก)
+      share-link-box.tsx      # client — ลิงก์แชร์ "ใครมีลิงก์ก็เข้าได้" (อยู่ใน modal ตั้งค่า เห็นเฉพาะเจ้าของ)
+      card-attachments.tsx    # client — ไฟล์แนบของการ์ด (อยู่ใน modal รายละเอียดการ์ด)
       board-filters.tsx       # client — แถบฟิลเตอร์ (กรองฝั่ง client ล้วน)
       list-menu.tsx           # client — เมนู ⋯ ของคอลัมน์
       card-move-buttons.tsx   # ปุ่มย้ายการ์ด (fallback ของการลาก อยู่ใน modal)
@@ -98,6 +103,7 @@ lib/
   dashboard.ts                # ตัวเลข/กราฟของ dashboard (query อ่านอย่างเดียว)
   due.ts                      # เทียบวันกำหนดส่งด้วย "คีย์วันที่" ตามเวลาไทย + สีของแต่ละกลุ่ม
   points.ts                   # กติกาแต้ม/เลเวล/สตรีค (คณิตศาสตร์ล้วน ไม่แตะ DB → มี unit test)
+  attachments.ts              # กติกาไฟล์แนบ: ตรวจ URL / เดาชนิด / ขนาด (ฟังก์ชันบริสุทธิ์ → มี unit test)
   gamification.ts             # อ่าน-เขียน ledger ของ PointEvent + re-export ค่าจาก points.ts
 
 types/
@@ -162,7 +168,10 @@ prisma/
 - **action ที่แก้ข้อมูลต้องเช็ค `access.canEdit` ไม่ใช่แค่ `access` ไม่เป็น null**
   เขียนใหม่แล้วลืมบรรทัดนี้ = viewer แก้ข้อมูลได้
 - role มาตอนเชิญ (`createInviteAction` → `BoardInvite.role` → `BoardMember.role`)
+  หรือมาจากลิงก์แชร์ (`BoardShareLink.role` → `BoardMember.role`)
   ค่าที่ไม่รู้จักตกเป็น `EDITOR` เท่ากับ default เดิมของ schema
+- **การเปิด/ปิด/สร้างลิงก์แชร์ใหม่เป็นสิทธิ์ระดับเจ้าของ** เท่ากับการเชิญสมาชิก
+  (`updateShareLinkAction` / `regenerateShareLinkAction` เช็ค `ownerId` ตรง ๆ ไม่ใช้ `canEdit`)
 - ฝั่ง UI รับ prop `canEdit` ไล่ลงจาก `board/[id]/page.tsx` เพื่อ**ซ่อนปุ่มที่กดไม่ได้**
   — เป็นแค่เรื่อง UX เท่านั้น client component ถูกข้ามได้เสมอ ด่านจริงคือฝั่ง action
 
@@ -171,14 +180,17 @@ prisma/
 - `DATABASE_URL` — connection string ของ PostgreSQL
 - `AUTH_SECRET` — กุญแจเข้ารหัส session JWT (สร้างด้วย `npx auth secret`)
   เปลี่ยนค่านี้ = ผู้ใช้ทุกคนหลุด login
+- `BLOB_READ_WRITE_TOKEN` — โทเคนของ Vercel Blob สำหรับอัปโหลดไฟล์แนบ
+  ไม่ใส่ก็ยังแนบ "ลิงก์" ได้ตามปกติ มีแต่การอัปโหลดไฟล์ที่จะไม่ทำงาน (action คืนเงียบ ๆ)
 
 ---
 
 ## Data model (ดูของจริงที่ `prisma/schema.prisma`)
 
 `User` → `Board` (owner) → `List` → `Card`
-เสริมด้วย `BoardMember` (แชร์บอร์ด), `BoardInvite` (เชิญด้วย token),
-`Label`, `Priority`, `Checklist`/`ChecklistItem`, `Comment`, `Activity`, `PointEvent` (ledger แต้ม)
+เสริมด้วย `BoardMember` (แชร์บอร์ด), `BoardInvite` (เชิญด้วย token), `BoardShareLink` (ลิงก์ทั่วไป),
+`Label`, `Priority`, `Checklist`/`ChecklistItem`, `Comment`, `Attachment`, `Activity`,
+`PointEvent` (ledger แต้ม)
 
 จุดที่ต้องรู้:
 
@@ -193,6 +205,11 @@ prisma/
   คอลัมน์เก่าที่ยังไม่มีสีจะ fallback ไปใช้สีตามลำดับคอลัมน์ (`LIST_ACCENTS`)
 - **`Card.isCompleted` = สถานะตอนนี้ / `Card.completedAt` = เคยเสร็จหรือยัง**
   ลากออกจากคอลัมน์เสร็จสิ้นจะเซ็ต `isCompleted = false` แต่ **ห้ามล้าง `completedAt`**
+- **`BoardShareLink` แยกจาก `BoardInvite` โดยตั้งใจ** — invite ใช้ครั้งเดียวและผูกอีเมล
+  ส่วน share link ใช้ซ้ำได้ ไม่ผูกอีเมล บอร์ดละ 1 ลิงก์ (`boardId` เป็น `@unique`)
+  `enabled` เริ่มที่ `false` เสมอ และ **`enabled` คือด่านจริง ไม่ใช่การเดา token ไม่ออก**
+- **`Attachment.blobPathname` ต้องเก็บไว้เสมอ** สำหรับไฟล์ที่อัปโหลด ไม่งั้นลบ attachment แล้ว
+  ไฟล์จะค้างใน Blob กินโควตาไปเรื่อย ๆ (`deleteAttachmentAction` เรียก `del()` ก่อนลบแถว)
 - id ทุกตัวเป็น `cuid()`
 
 ---
@@ -239,6 +256,9 @@ prisma/
   modal ใช้ `components/ui/modal.tsx` ที่ครอบ `<dialog>` ของเบราว์เซอร์ (ได้ Esc + focus trap ฟรี)
 - ปุ่มที่ยิง Server Action ให้ใช้ `SubmitButton` (มี pending state) และปุ่มลบให้ใช้
   `ConfirmSubmitButton` (กดสองจังหวะ) จาก `components/ui/buttons.tsx` — **ห้ามใช้ `window.confirm`**
+  ใน `ConfirmSubmitButton` ปุ่มสองจังหวะมี `key` ต่างกัน (`idle` / `confirm`) **ห้ามเอาออก**
+  ไม่งั้น React จะ patch ปุ่มเดิมจาก `type="button"` เป็น `type="submit"` ระหว่างจัดการคลิกแรก
+  แล้วเบราว์เซอร์ทำ default action ของคลิกนั้นต่อ = กดครั้งเดียวลบเลย (เคยหลุดมาแล้ว)
 - ไอคอนทั้งหมดอยู่ที่ `components/ui/icons.tsx`
   **ห้ามตั้งชื่อไฟล์ว่า `icon.tsx` ในโฟลเดอร์ `app/`** เพราะ Next จะมองว่าเป็น metadata route
   แล้ว build พังด้วย "Default export is missing"
@@ -246,11 +266,18 @@ prisma/
 
 ### หน้าบอร์ด
 
-- การ์ดบนคอลัมน์โชว์แค่ข้อมูลสรุป (ชื่อ/กำหนดส่ง/priority/ผู้รับผิดชอบ/ความคืบหน้า checklist)
-  **การแก้ไขทุกอย่างอยู่ใน `card-detail-dialog.tsx`** อย่าเอาฟอร์มกลับไปแปะบนการ์ดอีก
+- การ์ดบนคอลัมน์โชว์แค่ข้อมูลสรุป (ชื่อ/กำหนดส่ง/priority/ผู้รับผิดชอบ/ความคืบหน้า checklist/
+  จำนวนไฟล์แนบ) **การแก้ไขทุกอย่างอยู่ใน `card-detail-dialog.tsx`**
+  อย่าเอาฟอร์มกลับไปแปะบนการ์ดอีก
+- **ไฟล์แนบใช้ `<img>` ธรรมดา ไม่ใช่ `next/image`** เพราะ attachment แบบลิงก์ชี้ไปโฮสต์ไหนก็ได้
+  ซึ่งครอบด้วย `images.remotePatterns` ไม่ได้ (มี `eslint-disable-next-line` กำกับไว้พร้อมเหตุผล)
+  ลิงก์ออกนอกทุกอันต้องมี `rel="noopener noreferrer"` และ URL ต้องผ่าน `sanitizeAttachmentUrl()`
+  ก่อนเก็บเสมอ ไม่งั้น `javascript:` กลายเป็น XSS ตอนเรนเดอร์เป็น `href`
 - **การสร้าง/แก้ไขบอร์ด คอลัมน์ และการ์ด ทำผ่าน modal ทั้งหมด ห้ามเอาช่องกรอก inline กลับมา**
   สร้างบอร์ด → `app-shell/create-board-dialog.tsx` / แก้บอร์ด → หัวข้อ "ข้อมูลบอร์ด"
-  ใน `board-settings-dialog.tsx` (เห็นเฉพาะเจ้าของ)
+  ใน `board-settings-dialog.tsx` (เห็นเฉพาะเจ้าของ) — **ปุ่ม "บันทึกข้อมูลบอร์ด" อยู่ที่ footer
+  ล่างสุดของ modal** ช่องกรอกจึงผูกกับฟอร์มนั้นด้วย attribute `form="board-info-<id>"`
+  แบบเดียวกับ `card-detail-dialog.tsx` (ปุ่มของ section อื่นทำงานทันทีอยู่แล้ว คงไว้ inline)
   เพิ่มคอลัมน์/กดที่ชื่อคอลัมน์ → `list-dialog.tsx` (ตัวเดียวกัน ส่ง prop `list` = โหมดแก้ไข)
   เพิ่มการ์ด → `card-create-dialog.tsx`
   สีที่ผู้ใช้ตั้งเองใช้ `ColorPicker` จาก `components/ui/color-picker.tsx` เสมอ

@@ -18,16 +18,20 @@ export function ColorPicker({
   name,
   value,
   onChange,
+  form,
 }: {
   name: string;
   value: string;
   onChange: (color: string) => void;
+  /** ผูกช่องสีเข้ากับฟอร์มที่อยู่คนละที่ในเอกสาร (เช่น ปุ่มบันทึกที่ footer ของ modal) */
+  form?: string;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <input
         type="color"
         name={name}
+        form={form}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         aria-label="เลือกสีเอง"

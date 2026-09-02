@@ -12,6 +12,7 @@ import {
   IconComment,
   IconFlag,
   IconGrip,
+  IconPaperclip,
 } from "@/app/components/ui/icons";
 import type { CardWithRelations } from "./types";
 
@@ -150,7 +151,10 @@ export function BoardCard({
         )}
       </div>
 
-      {(items.length > 0 || card.comments.length > 0 || card.assignees.length > 0) && (
+      {(items.length > 0 ||
+        card.comments.length > 0 ||
+        card.attachments.length > 0 ||
+        card.assignees.length > 0) && (
         <div className="mt-2 ml-6 flex items-center gap-3">
           {items.length > 0 && (
             <span className="text-muted flex items-center gap-1 text-[11px] tabular-nums">
@@ -162,6 +166,12 @@ export function BoardCard({
             <span className="text-muted flex items-center gap-1 text-[11px] tabular-nums">
               <IconComment size={12} />
               {card.comments.length}
+            </span>
+          )}
+          {card.attachments.length > 0 && (
+            <span className="text-muted flex items-center gap-1 text-[11px] tabular-nums">
+              <IconPaperclip size={12} />
+              {card.attachments.length}
             </span>
           )}
           <span className="ml-auto">

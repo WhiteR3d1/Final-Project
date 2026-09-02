@@ -3,51 +3,18 @@ import { prisma } from "./prisma";
 import { PointEventType } from "@/app/generated/prisma/enums";
 import type { Prisma } from "@/app/generated/prisma/client";
 import { dateKey, isOnTime } from "./due";
+import { POINTS, levelFromPoints, streakFromDayKeys } from "./points";
 
 /**
- * กติกาแต้มทั้งหมดอยู่ที่ไฟล์นี้ไฟล์เดียว
+ * กติกาแต้มทั้งหมดอยู่ที่ lib/points.ts (คณิตศาสตร์ล้วน เขียนเทสต์ครอบได้)
+ * ไฟล์นี้รับหน้าที่เฉพาะส่วนที่อ่าน/เขียน ledger `PointEvent` แล้ว re-export ต่อ
+ * เพื่อให้ call site เดิม import จากที่เดียวเหมือนเดิม
  *
  * ตาราง PointEvent เป็นแหล่งความจริงเดียว (ไม่มี cache ยอดรวม) และมี unique([cardId, type])
  * ทำให้การ์ดหนึ่งใบให้แต้มแต่ละชนิดได้ครั้งเดียวตลอดชีพ — ลากเข้า/ออกคอลัมน์ "เสร็จสิ้น"
  * กี่รอบก็ฟาร์มแต้มไม่ได้ และเราจึงไม่ต้องล็อกการ์ดที่เสร็จแล้วไม่ให้ลาก
  */
-export const POINTS = {
-  [PointEventType.CARD_COMPLETED]: 10,
-  [PointEventType.ON_TIME_BONUS]: 5,
-} as const;
-
-const LEVEL_TITLES = [
-  "มือใหม่หัดวางแผน",
-  "นักจัดการงาน",
-  "นักล่าเดดไลน์",
-  "มือโปรประจำทีม",
-  "เจ้าแห่งบอร์ด",
-  "ตำนานส่งงานตรงเวลา",
-];
-
-/** แต้มสะสมที่ต้องมีเพื่อขึ้นเลเวล n (เลเวล 1 เริ่มที่ 0 แต้ม) */
-function pointsToReachLevel(level: number): number {
-  const n = level - 1;
-  return n * n * 10 + n * 40;
-}
-
-export function levelFromPoints(points: number) {
-  let level = 1;
-  while (level < 99 && pointsToReachLevel(level + 1) <= points) level++;
-
-  const currentFloor = pointsToReachLevel(level);
-  const nextAt = pointsToReachLevel(level + 1);
-  const span = nextAt - currentFloor;
-
-  return {
-    level,
-    title: LEVEL_TITLES[Math.min(level - 1, LEVEL_TITLES.length - 1)],
-    currentFloor,
-    nextAt,
-    pointsToNext: Math.max(nextAt - points, 0),
-    progress: span > 0 ? Math.min(((points - currentFloor) / span) * 100, 100) : 100,
-  };
-}
+export { POINTS, levelFromPoints };
 
 type CardForAward = {
   id: string;
@@ -101,22 +68,6 @@ export async function awardCardCompletion(
   });
 
   return toCreate.reduce((sum, event) => sum + event.points, 0);
-}
-
-/** นับวันติดต่อกันที่ผู้ใช้ทำงานเสร็จ (ยังไม่ทำวันนี้ = สตรีคยังไม่ขาด นับจากเมื่อวาน) */
-function streakFromDayKeys(dayKeys: Set<string>): number {
-  const cursor = new Date();
-  if (!dayKeys.has(dateKey(cursor))) {
-    cursor.setDate(cursor.getDate() - 1);
-  }
-
-  let streak = 0;
-  while (dayKeys.has(dateKey(cursor))) {
-    streak++;
-    cursor.setDate(cursor.getDate() - 1);
-  }
-
-  return streak;
 }
 
 export async function getUserGameStats(userId: string) {

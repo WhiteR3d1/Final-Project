@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { BoardInvite, Label, Priority } from "@/app/generated/prisma/client";
+import { BoardRole } from "@/app/generated/prisma/enums";
 import { Modal } from "@/app/components/ui/modal";
 import { ConfirmSubmitButton, SubmitButton } from "@/app/components/ui/buttons";
 import { IconPlus, IconSettings, IconTrash } from "@/app/components/ui/icons";
@@ -17,12 +18,14 @@ export function BoardSettingsDialog({
   labels,
   priorities,
   invites,
+  canEdit,
   canInvite,
 }: {
   boardId: string;
   labels: Label[];
   priorities: Priority[];
   invites: BoardInvite[];
+  canEdit: boolean;
   canInvite: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -52,20 +55,23 @@ export function BoardSettingsDialog({
                   style={{ backgroundColor: `${label.color}22`, color: label.color }}
                 >
                   {label.name}
-                  <form action={deleteLabelAction} className="flex">
-                    <input type="hidden" name="labelId" value={label.id} />
-                    <ConfirmSubmitButton
-                      ariaLabel={`ลบป้ายกำกับ ${label.name}`}
-                      confirmLabel="ลบ?"
-                      className="hover:text-danger focus-visible:opacity-100 opacity-0 group-hover:opacity-100"
-                      confirmClassName="text-danger font-medium"
-                    >
-                      <IconTrash size={12} />
-                    </ConfirmSubmitButton>
-                  </form>
+                  {canEdit && (
+                    <form action={deleteLabelAction} className="flex">
+                      <input type="hidden" name="labelId" value={label.id} />
+                      <ConfirmSubmitButton
+                        ariaLabel={`ลบป้ายกำกับ ${label.name}`}
+                        confirmLabel="ลบ?"
+                        className="hover:text-danger focus-visible:opacity-100 opacity-0 group-hover:opacity-100"
+                        confirmClassName="text-danger font-medium"
+                      >
+                        <IconTrash size={12} />
+                      </ConfirmSubmitButton>
+                    </form>
+                  )}
                 </span>
               ))}
             </div>
+            {canEdit && (
             <form action={createLabelAction} className="flex items-center gap-1.5">
               <input type="hidden" name="boardId" value={boardId} />
               <input
@@ -88,25 +94,35 @@ export function BoardSettingsDialog({
                 <IconPlus size={14} />
               </SubmitButton>
             </form>
+            )}
           </section>
 
           <section>
             <h3 className="text-text mb-2 text-sm font-medium">ระดับความสำคัญ</h3>
-            <PriorityManager boardId={boardId} priorities={priorities} />
+            <PriorityManager boardId={boardId} priorities={priorities} canEdit={canEdit} />
           </section>
 
           <section>
             <h3 className="text-text mb-2 text-sm font-medium">เชิญสมาชิก</h3>
             {canInvite ? (
-              <form action={createInviteAction} className="flex items-center gap-1.5">
+              <form action={createInviteAction} className="flex flex-wrap items-center gap-1.5">
                 <input type="hidden" name="boardId" value={boardId} />
                 <input
                   type="email"
                   name="email"
                   placeholder="อีเมลที่ต้องการเชิญ"
                   required
-                  className={`${inputClass} flex-1`}
+                  className={`${inputClass} min-w-40 flex-1`}
                 />
+                <select
+                  name="role"
+                  defaultValue={BoardRole.EDITOR}
+                  aria-label="สิทธิ์ของผู้ถูกเชิญ"
+                  className={inputClass}
+                >
+                  <option value={BoardRole.EDITOR}>แก้ไขได้</option>
+                  <option value={BoardRole.VIEWER}>ดูอย่างเดียว</option>
+                </select>
                 <SubmitButton
                   pendingLabel="กำลังสร้างลิงก์..."
                   className="bg-accent text-accent-ink rounded-lg px-3 py-1.5 text-xs font-medium hover:brightness-110"
@@ -124,7 +140,8 @@ export function BoardSettingsDialog({
                 <ul className="flex flex-col gap-1">
                   {invites.map((invite) => (
                     <li key={invite.id} className="text-muted text-xs break-all">
-                      {invite.email} → <span className="font-mono">/invite/{invite.token}</span>
+                      {invite.email} ({invite.role === BoardRole.VIEWER ? "ดูอย่างเดียว" : "แก้ไขได้"}){" "}
+                      → <span className="font-mono">/invite/{invite.token}</span>
                     </li>
                   ))}
                 </ul>

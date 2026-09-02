@@ -13,12 +13,12 @@ export function ListMenu({
   listId,
   listName,
   isDoneList,
-  onRename,
+  onEdit,
 }: {
   listId: string;
   listName: string;
   isDoneList: boolean;
-  onRename: () => void;
+  onEdit: () => void;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -43,10 +43,10 @@ export function ListMenu({
               className={itemClass}
               onClick={() => {
                 setOpen(false);
-                onRename();
+                onEdit();
               }}
             >
-              เปลี่ยนชื่อคอลัมน์
+              แก้ไขคอลัมน์ (ชื่อ / สี / คำอธิบาย)
             </button>
 
             <form action={setDoneListAction}>

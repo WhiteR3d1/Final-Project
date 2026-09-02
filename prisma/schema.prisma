@@ -38,12 +38,12 @@ model Board {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  lists      List[]
-  labels     Label[]
-  priorities Priority[]
-  members    BoardMember[]
-  invites    BoardInvite[]
-  activities Activity[]
+  lists       List[]
+  labels      Label[]
+  priorities  Priority[]
+  members     BoardMember[]
+  invites     BoardInvite[]
+  activities  Activity[]
   pointEvents PointEvent[]
 }
 
@@ -88,13 +88,14 @@ model BoardInvite {
 }
 
 model List {
-  id         String  @id @default(cuid())
-  boardId    String
-  name       String
-  position   Float
-  color      String?
+  id          String  @id @default(cuid())
+  boardId     String
+  name        String
+  description String?
+  position    Float
+  color       String?
   // คอลัมน์ที่ถือว่า "เสร็จสิ้น" ของบอร์ด — บอร์ดละ 1 คอลัมน์เท่านั้น
-  isDoneList Boolean @default(false)
+  isDoneList  Boolean @default(false)
 
   board Board  @relation(fields: [boardId], references: [id], onDelete: Cascade)
   cards Card[]
@@ -115,12 +116,12 @@ model Card {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  list       List           @relation(fields: [listId], references: [id], onDelete: Cascade)
-  createdBy  User           @relation("CardCreator", fields: [createdById], references: [id])
-  priority   Priority?      @relation(fields: [priorityId], references: [id], onDelete: SetNull)
-  labels     CardLabel[]
-  assignees  CardAssignee[]
-  checklists Checklist[]
+  list        List           @relation(fields: [listId], references: [id], onDelete: Cascade)
+  createdBy   User           @relation("CardCreator", fields: [createdById], references: [id])
+  priority    Priority?      @relation(fields: [priorityId], references: [id], onDelete: SetNull)
+  labels      CardLabel[]
+  assignees   CardAssignee[]
+  checklists  Checklist[]
   comments    Comment[]
   activities  Activity[]
   pointEvents PointEvent[]
@@ -171,9 +172,9 @@ model CardAssignee {
 }
 
 model Checklist {
-  id     String @id @default(cuid())
-  cardId String
-  title  String
+  id       String @id @default(cuid())
+  cardId   String
+  title    String
   position Float
 
   card  Card            @relation(fields: [cardId], references: [id], onDelete: Cascade)

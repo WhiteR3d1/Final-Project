@@ -35,6 +35,7 @@ export function CardDetailDialog({
   boardLabels,
   boardMembers,
   boardPriorities,
+  canEdit,
   onClose,
   onAwarded,
 }: {
@@ -45,55 +46,86 @@ export function CardDetailDialog({
   boardLabels: Label[];
   boardMembers: User[];
   boardPriorities: Priority[];
+  canEdit: boolean;
   onClose: () => void;
   onAwarded: (points: number) => void;
 }) {
   const items = card.checklists.flatMap((checklist) => checklist.items);
   const doneItems = items.filter((item) => item.isCompleted).length;
 
+  // ปุ่ม "บันทึก" อยู่ที่ footer คู่กับปุ่มลบ แต่ <form> ซ้อนกันไม่ได้ (ปุ่มลบเป็นอีกฟอร์ม)
+  // จึงผูกช่องกรอกเข้ากับฟอร์มที่อยู่คนละที่ในเอกสารด้วย attribute form="<id>" ของ HTML
+  const editFormId = `card-edit-${card.id}`;
+
+  // viewer ไม่ได้เลือกอะไร จึงโชว์เฉพาะค่าที่การ์ดนี้ถูกตั้งไว้จริง ไม่ใช่ตัวเลือกทั้งบอร์ด
+  const visiblePriorities = canEdit
+    ? boardPriorities
+    : boardPriorities.filter((priority) => card.priorityId === priority.id);
+  const visibleLabels = canEdit
+    ? boardLabels
+    : boardLabels.filter((label) =>
+        card.labels.some((cardLabel) => cardLabel.labelId === label.id)
+      );
+  const visibleMembers = canEdit
+    ? boardMembers
+    : boardMembers.filter((member) =>
+        card.assignees.some((assignee) => assignee.userId === member.id)
+      );
+
   return (
     <Modal open onClose={onClose} size="lg" title="รายละเอียดการ์ด">
       <div className="grid grid-cols-1 gap-6 md:grid-cols-[1fr_240px]">
         {/* ---------- คอลัมน์ซ้าย: เนื้อหาการ์ด ---------- */}
         <div className="flex flex-col gap-5">
-          <form action={updateCardAction} className="flex flex-col gap-2">
-            <input type="hidden" name="cardId" value={card.id} />
-            <input type="hidden" name="priorityId" value={card.priorityId ?? ""} />
-            <input
-              type="text"
-              name="title"
-              defaultValue={card.title}
-              required
-              aria-label="ชื่อการ์ด"
-              className={`${fieldClass} text-base font-semibold`}
-            />
-            <textarea
-              name="description"
-              defaultValue={card.description ?? ""}
-              placeholder="รายละเอียดงาน..."
-              rows={3}
-              aria-label="รายละเอียดงาน"
-              className={`${fieldClass} resize-y`}
-            />
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="text-muted text-xs" htmlFor="dueDate">
-                กำหนดส่ง
-              </label>
+          {canEdit ? (
+            <div className="flex flex-col gap-2">
               <input
-                id="dueDate"
-                type="date"
-                name="dueDate"
-                defaultValue={card.dueDate ? card.dueDate.toISOString().slice(0, 10) : ""}
-                className={`${fieldClass} w-auto py-1.5`}
+                form={editFormId}
+                type="text"
+                name="title"
+                defaultValue={card.title}
+                required
+                aria-label="ชื่อการ์ด"
+                className={`${fieldClass} text-base font-semibold`}
               />
-              <SubmitButton
-                pendingLabel="กำลังบันทึก..."
-                className="bg-accent text-accent-ink ml-auto rounded-lg px-3 py-1.5 text-sm font-medium hover:brightness-110"
-              >
-                บันทึก
-              </SubmitButton>
+              <textarea
+                form={editFormId}
+                name="description"
+                defaultValue={card.description ?? ""}
+                placeholder="รายละเอียดงาน..."
+                rows={3}
+                aria-label="รายละเอียดงาน"
+                className={`${fieldClass} resize-y`}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="text-muted text-xs" htmlFor="dueDate">
+                  กำหนดส่ง
+                </label>
+                <input
+                  form={editFormId}
+                  id="dueDate"
+                  type="date"
+                  name="dueDate"
+                  defaultValue={card.dueDate ? card.dueDate.toISOString().slice(0, 10) : ""}
+                  className={`${fieldClass} w-auto py-1.5`}
+                />
+              </div>
             </div>
-          </form>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <h3 className="text-text text-base font-semibold">{card.title}</h3>
+              {card.description ? (
+                <p className="text-muted text-sm whitespace-pre-wrap">{card.description}</p>
+              ) : (
+                <p className="text-muted text-sm italic">ไม่มีรายละเอียด</p>
+              )}
+              {card.dueDate && (
+                <p className="text-muted text-xs">
+                  กำหนดส่ง <span className="text-text">{formatDueThai(card.dueDate, true)}</span>
+                </p>
+              )}
+            </div>
+          )}
 
           {/* ---------- checklist ---------- */}
           <section>
@@ -102,21 +134,38 @@ export function CardDetailDialog({
             </h3>
 
             {card.checklists.length === 0 ? (
-              <form action={createChecklistAction}>
-                <input type="hidden" name="cardId" value={card.id} />
-                <SubmitButton className="border-line text-muted hover:text-text rounded-lg border border-dashed px-3 py-1.5 text-xs">
-                  + สร้างเช็กลิสต์
-                </SubmitButton>
-              </form>
+              canEdit ? (
+                <form action={createChecklistAction}>
+                  <input type="hidden" name="cardId" value={card.id} />
+                  <SubmitButton className="border-line text-muted hover:text-text rounded-lg border border-dashed px-3 py-1.5 text-xs">
+                    + สร้างเช็กลิสต์
+                  </SubmitButton>
+                </form>
+              ) : (
+                <p className="text-muted text-xs">ยังไม่มีเช็กลิสต์</p>
+              )
             ) : (
               card.checklists.map((checklist) => (
                 <div key={checklist.id} className="flex flex-col gap-1">
                   {checklist.items.map((item) => (
                     <div key={item.id} className="group flex items-center gap-2">
-                      <form action={toggleChecklistItemAction} className="flex">
-                        <input type="hidden" name="itemId" value={item.id} />
-                        <SubmitButton
-                          ariaLabel={item.isCompleted ? "ยกเลิกการติ๊ก" : "ติ๊กว่าเสร็จ"}
+                      {canEdit ? (
+                        <form action={toggleChecklistItemAction} className="flex">
+                          <input type="hidden" name="itemId" value={item.id} />
+                          <SubmitButton
+                            ariaLabel={item.isCompleted ? "ยกเลิกการติ๊ก" : "ติ๊กว่าเสร็จ"}
+                            className={`flex h-4 w-4 items-center justify-center rounded border ${
+                              item.isCompleted
+                                ? "border-accent bg-accent text-accent-ink"
+                                : "border-line text-transparent"
+                            }`}
+                          >
+                            <IconCheck size={11} />
+                          </SubmitButton>
+                        </form>
+                      ) : (
+                        <span
+                          aria-hidden="true"
                           className={`flex h-4 w-4 items-center justify-center rounded border ${
                             item.isCompleted
                               ? "border-accent bg-accent text-accent-ink"
@@ -124,8 +173,8 @@ export function CardDetailDialog({
                           }`}
                         >
                           <IconCheck size={11} />
-                        </SubmitButton>
-                      </form>
+                        </span>
+                      )}
                       <span
                         className={`flex-1 text-sm ${
                           item.isCompleted ? "text-muted line-through" : "text-text"
@@ -133,27 +182,31 @@ export function CardDetailDialog({
                       >
                         {item.content}
                       </span>
-                      <form action={deleteChecklistItemAction}>
-                        <input type="hidden" name="itemId" value={item.id} />
-                        <SubmitButton
-                          ariaLabel="ลบรายการ"
-                          className="text-muted hover:text-danger focus-visible:opacity-100 opacity-0 group-hover:opacity-100"
-                        >
-                          <IconTrash size={14} />
-                        </SubmitButton>
-                      </form>
+                      {canEdit && (
+                        <form action={deleteChecklistItemAction}>
+                          <input type="hidden" name="itemId" value={item.id} />
+                          <SubmitButton
+                            ariaLabel="ลบรายการ"
+                            className="text-muted hover:text-danger focus-visible:opacity-100 opacity-0 group-hover:opacity-100"
+                          >
+                            <IconTrash size={14} />
+                          </SubmitButton>
+                        </form>
+                      )}
                     </div>
                   ))}
-                  <form action={addChecklistItemAction} className="mt-1">
-                    <input type="hidden" name="checklistId" value={checklist.id} />
-                    <input
-                      type="text"
-                      name="content"
-                      placeholder="+ เพิ่มรายการ"
-                      autoComplete="off"
-                      className={`${fieldClass} py-1.5 text-xs`}
-                    />
-                  </form>
+                  {canEdit && (
+                    <form action={addChecklistItemAction} className="mt-1">
+                      <input type="hidden" name="checklistId" value={checklist.id} />
+                      <input
+                        type="text"
+                        name="content"
+                        placeholder="+ เพิ่มรายการ"
+                        autoComplete="off"
+                        className={`${fieldClass} py-1.5 text-xs`}
+                      />
+                    </form>
+                  )}
                 </div>
               ))
             )}
@@ -174,16 +227,22 @@ export function CardDetailDialog({
                   </div>
                 </div>
               ))}
-              <form action={addCommentAction}>
-                <input type="hidden" name="cardId" value={card.id} />
-                <input
-                  type="text"
-                  name="content"
-                  placeholder="เขียนความคิดเห็น..."
-                  autoComplete="off"
-                  className={`${fieldClass} py-1.5 text-xs`}
-                />
-              </form>
+              {canEdit ? (
+                <form action={addCommentAction}>
+                  <input type="hidden" name="cardId" value={card.id} />
+                  <input
+                    type="text"
+                    name="content"
+                    placeholder="เขียนความคิดเห็น..."
+                    autoComplete="off"
+                    className={`${fieldClass} py-1.5 text-xs`}
+                  />
+                </form>
+              ) : (
+                card.comments.length === 0 && (
+                  <p className="text-muted text-xs">ยังไม่มีความคิดเห็น</p>
+                )
+              )}
             </div>
           </section>
         </div>
@@ -205,22 +264,42 @@ export function CardDetailDialog({
             <p className="text-muted mt-2 text-xs">
               คอลัมน์ปัจจุบัน: <span className="text-text">{listName}</span>
             </p>
-            <CardMoveButtons
-              cardId={card.id}
-              canMoveLeft={listIndex > 0}
-              canMoveRight={listIndex < totalLists - 1}
-              onAwarded={onAwarded}
-            />
+            {canEdit && (
+              <CardMoveButtons
+                cardId={card.id}
+                canMoveLeft={listIndex > 0}
+                canMoveRight={listIndex < totalLists - 1}
+                onAwarded={onAwarded}
+              />
+            )}
           </section>
 
           <section>
             <h3 className={sectionTitleClass}>ระดับความสำคัญ</h3>
             <div className="flex flex-wrap gap-1.5">
-              {boardPriorities.length === 0 && (
+              {visiblePriorities.length === 0 && (
                 <p className="text-muted text-xs">ยังไม่มี priority ในบอร์ดนี้</p>
               )}
-              {boardPriorities.map((priority) => {
+              {visiblePriorities.map((priority) => {
                 const isActive = card.priorityId === priority.id;
+                // สีมาจากที่ผู้ใช้ตั้งเองใน DB จึงต้องใส่ผ่าน style
+                const chip = (
+                  <span
+                    style={
+                      isActive
+                        ? { backgroundColor: `${priority.color}22`, color: priority.color }
+                        : { borderColor: priority.color, color: priority.color }
+                    }
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                      isActive ? "" : "border border-dashed opacity-70"
+                    }`}
+                  >
+                    {priority.name}
+                  </span>
+                );
+
+                if (!canEdit) return <span key={priority.id}>{chip}</span>;
+
                 return (
                   <form key={priority.id} action={setCardPriorityAction}>
                     <input type="hidden" name="cardId" value={card.id} />
@@ -228,20 +307,8 @@ export function CardDetailDialog({
                     <SubmitButton
                       title={isActive ? "เอาออก" : `ตั้งเป็น ${priority.name}`}
                       className="rounded-full px-2 py-0.5 text-[11px] font-medium"
-                      // สีมาจากที่ผู้ใช้ตั้งเองใน DB จึงต้องใส่ผ่าน style
                     >
-                      <span
-                        style={
-                          isActive
-                            ? { backgroundColor: `${priority.color}22`, color: priority.color }
-                            : { borderColor: priority.color, color: priority.color }
-                        }
-                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${
-                          isActive ? "" : "border border-dashed opacity-70"
-                        }`}
-                      >
-                        {priority.name}
-                      </span>
+                      {chip}
                     </SubmitButton>
                   </form>
                 );
@@ -252,26 +319,32 @@ export function CardDetailDialog({
           <section>
             <h3 className={sectionTitleClass}>ป้ายกำกับ</h3>
             <div className="flex flex-wrap gap-1.5">
-              {boardLabels.length === 0 && (
+              {visibleLabels.length === 0 && (
                 <p className="text-muted text-xs">ยังไม่มีป้ายกำกับ</p>
               )}
-              {boardLabels.map((label) => {
+              {visibleLabels.map((label) => {
                 const isAssigned = card.labels.some((cardLabel) => cardLabel.labelId === label.id);
+                const chip = (
+                  <span
+                    style={{
+                      backgroundColor: isAssigned ? label.color : "transparent",
+                      borderColor: label.color,
+                      color: isAssigned ? "#0b0c0e" : label.color,
+                    }}
+                    className="inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium"
+                  >
+                    {label.name}
+                  </span>
+                );
+
+                if (!canEdit) return <span key={label.id}>{chip}</span>;
+
                 return (
                   <form key={label.id} action={toggleCardLabelAction}>
                     <input type="hidden" name="cardId" value={card.id} />
                     <input type="hidden" name="labelId" value={label.id} />
                     <SubmitButton title={label.name} ariaLabel={`สลับป้าย ${label.name}`}>
-                      <span
-                        style={{
-                          backgroundColor: isAssigned ? label.color : "transparent",
-                          borderColor: label.color,
-                          color: isAssigned ? "#0b0c0e" : label.color,
-                        }}
-                        className="inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium"
-                      >
-                        {label.name}
-                      </span>
+                      {chip}
                     </SubmitButton>
                   </form>
                 );
@@ -282,10 +355,19 @@ export function CardDetailDialog({
           <section>
             <h3 className={sectionTitleClass}>ผู้รับผิดชอบ</h3>
             <div className="flex flex-wrap gap-1.5">
-              {boardMembers.map((member) => {
+              {visibleMembers.map((member) => {
                 const isAssigned = card.assignees.some(
                   (assignee) => assignee.userId === member.id
                 );
+
+                if (!canEdit) {
+                  return (
+                    <span key={member.id} title={displayName(member)}>
+                      <Avatar user={member} size={26} />
+                    </span>
+                  );
+                }
+
                 return (
                   <form key={member.id} action={toggleCardAssigneeAction}>
                     <input type="hidden" name="cardId" value={card.id} />
@@ -303,17 +385,34 @@ export function CardDetailDialog({
             </div>
           </section>
 
-          <form action={deleteCardAction} className="border-line border-t pt-4">
-            <input type="hidden" name="cardId" value={card.id} />
-            <ConfirmSubmitButton
-              className="text-muted hover:text-danger flex items-center gap-1.5 text-xs"
-              confirmClassName="bg-danger/15 text-danger rounded-lg px-2.5 py-1 text-xs font-medium"
-            >
-              <IconTrash size={14} /> ลบการ์ดนี้
-            </ConfirmSubmitButton>
-          </form>
         </aside>
       </div>
+
+      {canEdit && (
+      <footer className="border-line mt-6 flex flex-wrap items-center gap-2 border-t pt-4">
+        <form action={deleteCardAction} className="mr-auto">
+          <input type="hidden" name="cardId" value={card.id} />
+          <ConfirmSubmitButton
+            confirmLabel="กดอีกครั้งเพื่อลบ"
+            className="border-line text-danger hover:bg-danger/10 hover:border-danger flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium"
+            confirmClassName="bg-danger text-danger-ink rounded-lg px-3 py-1.5 text-sm font-medium"
+          >
+            <IconTrash size={15} /> ลบการ์ดนี้
+          </ConfirmSubmitButton>
+        </form>
+
+        <form id={editFormId} action={updateCardAction}>
+          <input type="hidden" name="cardId" value={card.id} />
+          <input type="hidden" name="priorityId" value={card.priorityId ?? ""} />
+          <SubmitButton
+            pendingLabel="กำลังบันทึก..."
+            className="bg-accent text-accent-ink rounded-lg px-5 py-1.5 text-sm font-medium hover:brightness-110"
+          >
+            บันทึก
+          </SubmitButton>
+        </form>
+      </footer>
+      )}
     </Modal>
   );
 }

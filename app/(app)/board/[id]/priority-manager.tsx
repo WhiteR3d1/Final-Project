@@ -13,9 +13,11 @@ const colorClass = "border-line bg-panel-2 h-7 w-9 cursor-pointer rounded-lg bor
 export function PriorityManager({
   boardId,
   priorities,
+  canEdit,
 }: {
   boardId: string;
   priorities: Priority[];
+  canEdit: boolean;
 }) {
   return (
     <div className="flex flex-col gap-2.5">
@@ -24,10 +26,11 @@ export function PriorityManager({
           <p className="text-muted text-xs">ยังไม่มีระดับความสำคัญในบอร์ดนี้</p>
         )}
         {priorities.map((priority) => (
-          <PriorityChip key={priority.id} priority={priority} />
+          <PriorityChip key={priority.id} priority={priority} canEdit={canEdit} />
         ))}
       </div>
 
+      {canEdit && (
       <form action={createPriorityAction} className="flex items-center gap-1.5">
         <input type="hidden" name="boardId" value={boardId} />
         <input
@@ -45,14 +48,15 @@ export function PriorityManager({
           <IconPlus size={14} />
         </SubmitButton>
       </form>
+      )}
     </div>
   );
 }
 
-function PriorityChip({ priority }: { priority: Priority }) {
+function PriorityChip({ priority, canEdit }: { priority: Priority; canEdit: boolean }) {
   const [isEditing, setIsEditing] = useState(false);
 
-  if (isEditing) {
+  if (isEditing && canEdit) {
     return (
       <form
         action={async (formData) => {
@@ -96,9 +100,14 @@ function PriorityChip({ priority }: { priority: Priority }) {
       style={{ backgroundColor: `${priority.color}22`, color: priority.color }}
     >
       <span className="h-2 w-2 rounded-full" style={{ backgroundColor: priority.color }} />
-      <button type="button" onClick={() => setIsEditing(true)}>
-        {priority.name}
-      </button>
+      {canEdit ? (
+        <button type="button" onClick={() => setIsEditing(true)}>
+          {priority.name}
+        </button>
+      ) : (
+        priority.name
+      )}
+      {canEdit && (
       <form action={deletePriorityAction} className="flex">
         <input type="hidden" name="priorityId" value={priority.id} />
         <ConfirmSubmitButton
@@ -110,6 +119,7 @@ function PriorityChip({ priority }: { priority: Priority }) {
           <IconTrash size={12} />
         </ConfirmSubmitButton>
       </form>
+      )}
     </span>
   );
 }

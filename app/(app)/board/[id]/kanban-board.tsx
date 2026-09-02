@@ -25,15 +25,11 @@ import type { Label, Priority, User } from "@/app/generated/prisma/client";
 import { dueBucket } from "@/lib/due";
 import { Toast } from "@/app/components/ui/toast";
 import { IconGrip, IconPlus } from "@/app/components/ui/icons";
-import {
-  createListAction,
-  renameListAction,
-  createCardAction,
-  reorderListAction,
-  reorderCardAction,
-} from "./actions";
+import { reorderListAction, reorderCardAction } from "./actions";
 import { BoardCard, DRAG_THRESHOLD } from "./board-card";
 import { CardDetailDialog } from "./card-detail-dialog";
+import { CardCreateDialog } from "./card-create-dialog";
+import { ListDialog } from "./list-dialog";
 import { ListMenu } from "./list-menu";
 import {
   BoardFilters,
@@ -51,12 +47,14 @@ export function KanbanBoard({
   boardLabels,
   boardMembers,
   boardPriorities,
+  canEdit,
 }: {
   boardId: string;
   initialLists: ListWithCards[];
   boardLabels: Label[];
   boardMembers: User[];
   boardPriorities: Priority[];
+  canEdit: boolean;
 }) {
   const [lists, setLists] = useState(initialLists);
   const [activeCard, setActiveCard] = useState<CardWithRelations | null>(null);
@@ -65,6 +63,9 @@ export function KanbanBoard({
   const [filters, setFilters] = useState<BoardFilterState>(EMPTY_FILTERS);
   const [openCardId, setOpenCardId] = useState<string | null>(null);
   const [syncedLists, setSyncedLists] = useState(initialLists);
+  // null = ปิด, "new" = สร้างคอลัมน์ใหม่, id = แก้ไขคอลัมน์นั้น
+  const [listDialog, setListDialog] = useState<string | null>(null);
+  const [addCardListId, setAddCardListId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
   // ซิงก์ props ที่เพิ่ง revalidate มาลง state ระหว่าง render (แพตเทิร์นที่ React แนะนำ)
@@ -82,6 +83,8 @@ export function KanbanBoard({
   }
 
   const filtering = isFilterActive(filters);
+  // ลากไม่ได้ทั้งตอนกรอง (ตำแหน่งเพื่อนบ้านเพี้ยน) และตอนเป็น viewer
+  const dragDisabled = filtering || !canEdit;
 
   const visibleLists = useMemo(() => {
     if (!filtering) return lists;
@@ -118,6 +121,13 @@ export function KanbanBoard({
   const openCardListIndex = openCard
     ? lists.findIndex((list) => list.id === openCard.listId)
     : -1;
+
+  const editingList = listDialog && listDialog !== "new"
+    ? lists.find((list) => list.id === listDialog)
+    : undefined;
+  const addCardList = addCardListId
+    ? lists.find((list) => list.id === addCardListId)
+    : undefined;
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: DRAG_THRESHOLD } }),
@@ -251,7 +261,8 @@ export function KanbanBoard({
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >
-        <div className="flex items-start gap-4 overflow-x-auto pb-4">
+        {/* คอลัมน์สูงเต็มจอเพื่อให้บอร์ดกินพื้นที่ก่อน ส่วนกิจกรรมล่าสุดจึงตกไปอยู่ใต้ fold */}
+        <div className="flex h-[calc(100vh-20rem)] min-h-100 items-stretch gap-4 overflow-x-auto pb-4">
           <SortableContext
             items={visibleLists.map((list) => list.id)}
             strategy={horizontalListSortingStrategy}
@@ -261,7 +272,10 @@ export function KanbanBoard({
                 key={list.id}
                 list={list}
                 accent={LIST_ACCENTS[listIndex % LIST_ACCENTS.length]}
-                dragDisabled={filtering}
+                dragDisabled={dragDisabled}
+                canEdit={canEdit}
+                onEdit={() => setListDialog(list.id)}
+                onAddCard={() => setAddCardListId(list.id)}
               >
                 <SortableContext
                   items={list.cards.map((card) => card.id)}
@@ -271,7 +285,7 @@ export function KanbanBoard({
                     <BoardCard
                       key={card.id}
                       card={card}
-                      dragDisabled={filtering}
+                      dragDisabled={dragDisabled}
                       onOpen={() => setOpenCardId(card.id)}
                     />
                   ))}
@@ -282,42 +296,22 @@ export function KanbanBoard({
                     {filtering ? "ไม่มีการ์ดที่ตรงกับตัวกรอง" : "ยังไม่มีการ์ดในคอลัมน์นี้"}
                   </p>
                 )}
-
-                <form action={createCardAction} className="mt-1">
-                  <input type="hidden" name="listId" value={list.id} />
-                  <input
-                    type="text"
-                    name="title"
-                    placeholder="+ เพิ่มการ์ด"
-                    autoComplete="off"
-                    className="text-text placeholder:text-muted focus:border-line focus:bg-panel hover:bg-panel/60 w-full rounded-lg border border-transparent bg-transparent px-2.5 py-2 text-sm focus:outline-none"
-                  />
-                </form>
               </SortableList>
             ))}
           </SortableContext>
 
-          <div className="w-72 shrink-0">
-            <form
-              action={createListAction}
-              className="border-line rounded-2xl border border-dashed p-3"
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => setListDialog("new")}
+              className="border-line text-muted hover:text-text hover:border-accent flex w-72 shrink-0 items-center justify-center gap-1.5 self-start rounded-2xl border border-dashed px-3 py-3 text-sm"
             >
-              <input type="hidden" name="boardId" value={boardId} />
-              <label className="text-muted mb-1.5 flex items-center gap-1.5 px-1 text-xs">
-                <IconPlus size={14} /> เพิ่มคอลัมน์
-              </label>
-              <input
-                type="text"
-                name="name"
-                placeholder="ชื่อคอลัมน์ใหม่"
-                autoComplete="off"
-                className="border-line bg-panel text-text placeholder:text-muted focus:border-accent w-full rounded-lg border px-2.5 py-1.5 text-sm focus:outline-none"
-              />
-            </form>
-          </div>
+              <IconPlus size={16} /> เพิ่มคอลัมน์
+            </button>
+          )}
 
           {lists.length === 0 && (
-            <p className="text-muted text-sm">ยังไม่มีคอลัมน์ในบอร์ดนี้</p>
+            <p className="text-muted self-start text-sm">ยังไม่มีคอลัมน์ในบอร์ดนี้</p>
           )}
         </div>
 
@@ -344,8 +338,26 @@ export function KanbanBoard({
           boardLabels={boardLabels}
           boardMembers={boardMembers}
           boardPriorities={boardPriorities}
+          canEdit={canEdit}
           onClose={() => setOpenCardId(null)}
           onAwarded={celebrate}
+        />
+      )}
+
+      {listDialog && (
+        <ListDialog
+          boardId={boardId}
+          list={editingList}
+          onClose={() => setListDialog(null)}
+        />
+      )}
+
+      {addCardList && (
+        <CardCreateDialog
+          listId={addCardList.id}
+          listName={addCardList.name}
+          priorities={boardPriorities}
+          onClose={() => setAddCardListId(null)}
         />
       )}
 
@@ -358,40 +370,31 @@ function SortableList({
   list,
   accent,
   dragDisabled,
+  canEdit,
+  onEdit,
+  onAddCard,
   children,
 }: {
   list: ListWithCards;
   accent: string;
   dragDisabled: boolean;
+  canEdit: boolean;
+  onEdit: () => void;
+  onAddCard: () => void;
   children: React.ReactNode;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: list.id,
     disabled: dragDisabled,
   });
-  const [isEditingName, setIsEditingName] = useState(false);
-  const [nameDraft, setNameDraft] = useState(list.name);
-  const [, startTransition] = useTransition();
 
   function handlePointerDown(event: React.PointerEvent<HTMLDivElement>) {
     if (dragDisabled) return;
     const target = event.target as HTMLElement;
     // ช่องกรอกกับเมนูต้องใช้งานได้ตามปกติ ห้ามกลายเป็นการลากคอลัมน์
-    if (target.closest("input, textarea, select, [data-no-drag]")) return;
+    if (target.closest("input, textarea, select, button, [data-no-drag]")) return;
     if (target.closest("[data-drag-handle]")) return;
     listeners?.onPointerDown?.(event);
-  }
-
-  function commitRename() {
-    setIsEditingName(false);
-    const trimmed = nameDraft.trim();
-    if (trimmed && trimmed !== list.name) {
-      startTransition(() => {
-        renameListAction(list.id, trimmed);
-      });
-    } else {
-      setNameDraft(list.name);
-    }
   }
 
   return (
@@ -403,10 +406,11 @@ function SortableList({
         transition,
         opacity: isDragging ? 0.4 : 1,
       }}
-      className="group/list border-line bg-panel-2 flex w-72 shrink-0 flex-col gap-2 rounded-2xl border p-3"
+      className="group/list border-line bg-panel-2 flex h-full w-72 shrink-0 flex-col gap-2 rounded-2xl border p-3"
     >
-      <div className="flex items-center gap-1.5">
-        {/* ปุ่มจับลากยังอยู่เพื่อการลากด้วยคีย์บอร์ด (เมาส์ลากตรงไหนของคอลัมน์ก็ได้) */}
+      <div className="flex shrink-0 items-center gap-1.5">
+        {/* ปุ่มจับลากยังอยู่เพื่อการลากด้วยคีย์บอร์ด (เมาส์ลากที่พื้นว่างของคอลัมน์ก็ได้) */}
+        {canEdit && (
         <button
           type="button"
           data-drag-handle
@@ -418,61 +422,67 @@ function SortableList({
         >
           <IconGrip size={14} />
         </button>
-
-        {isEditingName ? (
-          <input
-            autoFocus
-            value={nameDraft}
-            onChange={(event) => setNameDraft(event.target.value)}
-            onBlur={commitRename}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                commitRename();
-              }
-              if (event.key === "Escape") {
-                setNameDraft(list.name);
-                setIsEditingName(false);
-              }
-            }}
-            aria-label="ชื่อคอลัมน์"
-            className="border-line bg-panel text-text min-w-0 flex-1 rounded-lg border px-2 py-1 text-sm font-semibold focus:outline-none"
-          />
-        ) : (
-          <button
-            type="button"
-            onClick={() => {
-              setNameDraft(list.name);
-              setIsEditingName(true);
-            }}
-            className={`inline-flex min-w-0 flex-1 items-center gap-1.5 rounded-full px-2.5 py-1 text-left text-xs font-semibold ${
-              list.isDoneList ? "bg-accent/15 text-accent" : "bg-panel text-text"
-            }`}
-          >
-            <span
-              className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                list.isDoneList ? "bg-accent" : accent
-              }`}
-            />
-            <span className="truncate">{list.name}</span>
-            {list.isDoneList && <span className="shrink-0 opacity-80">· เสร็จสิ้น</span>}
-          </button>
         )}
+
+        {(() => {
+          const chipClass = `inline-flex min-w-0 flex-1 items-center gap-1.5 rounded-full px-2.5 py-1 text-left text-xs font-semibold ${
+            list.isDoneList ? "bg-accent/15 text-accent" : "bg-panel text-text"
+          }`;
+          const inner = (
+            <>
+              {/* สีที่ผู้ใช้ตั้งเองเก็บใน DB จึงใส่ผ่าน style ไม่ใช่ token */}
+              <span
+                style={list.color && !list.isDoneList ? { backgroundColor: list.color } : undefined}
+                className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                  list.isDoneList ? "bg-accent" : list.color ? "" : accent
+                }`}
+              />
+              <span className="truncate">{list.name}</span>
+              {list.isDoneList && <span className="shrink-0 opacity-80">· เสร็จสิ้น</span>}
+            </>
+          );
+
+          return canEdit ? (
+            <button type="button" onClick={onEdit} title="แก้ไขคอลัมน์" className={chipClass}>
+              {inner}
+            </button>
+          ) : (
+            <span className={chipClass}>{inner}</span>
+          );
+        })()}
 
         <span className="text-muted shrink-0 text-xs tabular-nums">{list.cards.length}</span>
 
-        <ListMenu
-          listId={list.id}
-          listName={list.name}
-          isDoneList={list.isDoneList}
-          onRename={() => {
-            setNameDraft(list.name);
-            setIsEditingName(true);
-          }}
-        />
+        {canEdit && (
+          <ListMenu
+            listId={list.id}
+            listName={list.name}
+            isDoneList={list.isDoneList}
+            onEdit={onEdit}
+          />
+        )}
       </div>
 
-      <div className="flex flex-col gap-2">{children}</div>
+      {list.description && (
+        <p className="text-muted line-clamp-2 shrink-0 px-1 text-[11px] leading-4">
+          {list.description}
+        </p>
+      )}
+
+      {/* การ์ดเลื่อนอยู่ในคอลัมน์ ปุ่มเพิ่มการ์ดจึงติดล่างคอลัมน์เสมอ */}
+      <div className="-mx-1 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-1">
+        {children}
+      </div>
+
+      {canEdit && (
+        <button
+          type="button"
+          onClick={onAddCard}
+          className="text-muted hover:bg-panel hover:text-text flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm"
+        >
+          <IconPlus size={14} /> เพิ่มการ์ด
+        </button>
+      )}
     </div>
   );
 }

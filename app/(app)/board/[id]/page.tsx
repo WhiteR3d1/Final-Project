@@ -79,6 +79,8 @@ export default async function BoardPage({ params }: { params: Promise<{ id: stri
         <h1 className="text-text text-xl font-bold tracking-tight">{board.name}</h1>
         <AvatarStack users={boardMembers} max={4} size={26} />
 
+        {!access.canEdit && <Chip tone="info">ดูอย่างเดียว</Chip>}
+
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Link
             href={`/calendar?board=${board.id}`}
@@ -91,7 +93,8 @@ export default async function BoardPage({ params }: { params: Promise<{ id: stri
             labels={board.labels}
             priorities={board.priorities}
             invites={board.invites}
-            canInvite={board.ownerId === user.id}
+            canEdit={access.canEdit}
+            canInvite={access.isOwner}
           />
         </div>
       </header>
@@ -135,6 +138,7 @@ export default async function BoardPage({ params }: { params: Promise<{ id: stri
         boardLabels={board.labels}
         boardMembers={boardMembers}
         boardPriorities={board.priorities}
+        canEdit={access.canEdit}
       />
 
       <Panel title="กิจกรรมล่าสุด" className="max-w-2xl">

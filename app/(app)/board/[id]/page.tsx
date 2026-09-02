@@ -32,6 +32,7 @@ export default async function BoardPage({ params }: { params: Promise<{ id: stri
         where: { status: InviteStatus.PENDING },
         orderBy: { createdAt: "desc" },
       },
+      shareLink: true,
       lists: {
         orderBy: { position: "asc" },
         include: {
@@ -46,6 +47,7 @@ export default async function BoardPage({ params }: { params: Promise<{ id: stri
               labels: { include: { label: true } },
               assignees: { include: { user: true } },
               priority: true,
+              attachments: { orderBy: { createdAt: "asc" } },
             },
           },
         },
@@ -101,6 +103,7 @@ export default async function BoardPage({ params }: { params: Promise<{ id: stri
             labels={board.labels}
             priorities={board.priorities}
             invites={board.invites}
+            shareLink={board.shareLink}
             canEdit={access.canEdit}
             canInvite={access.isOwner}
           />

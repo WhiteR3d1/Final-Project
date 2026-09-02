@@ -26,6 +26,7 @@ model User {
   comments     Comment[]
   activities   Activity[]
   pointEvents  PointEvent[]
+  attachments  Attachment[]
 }
 
 model Board {
@@ -43,6 +44,7 @@ model Board {
   priorities  Priority[]
   members     BoardMember[]
   invites     BoardInvite[]
+  shareLink   BoardShareLink?
   activities  Activity[]
   pointEvents PointEvent[]
 }
@@ -87,6 +89,22 @@ model BoardInvite {
   board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
 }
 
+// ลิงก์แชร์แบบ "ใครมีลิงก์ก็เข้าได้" — ใช้ซ้ำได้ ไม่ผูกอีเมล จึงแยกจาก BoardInvite
+// ที่เป็นคำเชิญใช้ครั้งเดียวและมี status/expiresAt เป็นของตัวเอง
+model BoardShareLink {
+  id        String    @id @default(cuid())
+  // บอร์ดละ 1 ลิงก์ เหมือน Google Drive
+  boardId   String    @unique
+  token     String    @unique
+  role      BoardRole @default(EDITOR)
+  // ค่าเริ่มต้นคือปิด เจ้าของต้องเปิดเอง
+  enabled   Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+}
+
 model List {
   id          String  @id @default(cuid())
   boardId     String
@@ -125,6 +143,7 @@ model Card {
   comments    Comment[]
   activities  Activity[]
   pointEvents PointEvent[]
+  attachments Attachment[]
 }
 
 model Label {
@@ -189,6 +208,34 @@ model ChecklistItem {
   isCompleted Boolean @default(false)
 
   checklist Checklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+}
+
+enum AttachmentType {
+  IMAGE
+  FILE
+  LINK
+}
+
+// ไฟล์แนบของการ์ด — รูป/ไฟล์ที่อัปโหลดขึ้น Vercel Blob และลิงก์ที่ชี้ไปโฮสต์ไหนก็ได้
+model Attachment {
+  id     String         @id @default(cuid())
+  cardId String
+  type   AttachmentType
+  // ชื่อไฟล์ หรือชื่อที่ผู้ใช้ตั้งให้ลิงก์
+  name   String
+  url    String
+  // เฉพาะไฟล์ที่อัปโหลดเอง (หน่วยเป็น byte)
+  size     Int?
+  mimeType String?
+  // ต้องเก็บไว้ลบไฟล์ออกจาก Blob ตอนลบ attachment ไม่งั้นไฟล์ค้างกินโควตาไปเรื่อย ๆ
+  blobPathname String?
+  uploadedById String
+  createdAt    DateTime @default(now())
+
+  card       Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  uploadedBy User @relation(fields: [uploadedById], references: [id])
+
+  @@index([cardId])
 }
 
 model Comment {

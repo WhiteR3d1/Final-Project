@@ -1,12 +1,19 @@
 "use server";
 
 import { randomUUID } from "crypto";
+import { del, put } from "@vercel/blob";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/dal";
 import { assertBoardAccess } from "@/lib/board-access";
 import { ActivityType, BoardRole, InviteStatus } from "@/app/generated/prisma/enums";
 import { awardCardCompletion } from "@/lib/gamification";
+import {
+  attachmentKindForUpload,
+  attachmentNameFromUrl,
+  isWithinAttachmentSizeLimit,
+  sanitizeAttachmentUrl,
+} from "@/lib/attachments";
 
 type CardForCompletion = {
   id: string;
@@ -772,6 +779,148 @@ export async function createInviteAction(formData: FormData) {
   });
 
   revalidatePath(`/board/${boardId}`);
+}
+
+/**
+ * เปิด/ปิดลิงก์แชร์ของบอร์ด และตั้งว่าคนที่เข้ามาทางลิงก์ได้สิทธิ์อะไร — **เจ้าของเท่านั้น**
+ * ไม่ใช้ canEdit เพราะการเปิดทางให้คนนอกเข้าบอร์ดเป็นสิทธิ์ระดับเดียวกับการเชิญสมาชิก
+ */
+export async function updateShareLinkAction(formData: FormData) {
+  const boardId = formData.get("boardId");
+  if (typeof boardId !== "string") return;
+
+  const enabled = formData.get("enabled") === "1";
+  // ค่าที่ไม่รู้จักตกเป็น EDITOR เท่ากับ default เดิมของ schema
+  const role = formData.get("role") === BoardRole.VIEWER ? BoardRole.VIEWER : BoardRole.EDITOR;
+
+  const user = await getCurrentUser();
+
+  const board = await prisma.board.findUniqueOrThrow({ where: { id: boardId } });
+  if (board.ownerId !== user.id) return;
+
+  await prisma.boardShareLink.upsert({
+    where: { boardId },
+    update: { enabled, role },
+    create: { boardId, token: randomUUID(), enabled, role },
+  });
+
+  revalidatePath(`/board/${boardId}`);
+}
+
+/** สุ่ม token ใหม่ = ลิงก์เดิมที่ส่งออกไปแล้วใช้ไม่ได้ทันที — **เจ้าของเท่านั้น** */
+export async function regenerateShareLinkAction(formData: FormData) {
+  const boardId = formData.get("boardId");
+  if (typeof boardId !== "string") return;
+
+  const user = await getCurrentUser();
+
+  const board = await prisma.board.findUniqueOrThrow({ where: { id: boardId } });
+  if (board.ownerId !== user.id) return;
+
+  const link = await prisma.boardShareLink.findUnique({ where: { boardId } });
+  if (!link) return;
+
+  await prisma.boardShareLink.update({
+    where: { boardId },
+    data: { token: randomUUID() },
+  });
+
+  revalidatePath(`/board/${boardId}`);
+}
+
+/** การ์ด + boardId + สิทธิ์ ในการเรียกครั้งเดียว — ทุก action ของไฟล์แนบต้องผ่านด่านนี้ */
+async function cardEditAccess(cardId: string, userId: string) {
+  const card = await prisma.card.findUniqueOrThrow({
+    where: { id: cardId },
+    include: { list: { select: { boardId: true } } },
+  });
+
+  const access = await assertBoardAccess(card.list.boardId, userId);
+  if (!access?.canEdit) return null;
+
+  return { boardId: card.list.boardId };
+}
+
+/** แนบลิงก์ (ไม่ต้องใช้ Blob) — URL ผ่าน sanitizeAttachmentUrl ก่อนเสมอ */
+export async function addLinkAttachmentAction(formData: FormData) {
+  const cardId = formData.get("cardId");
+  const rawUrl = formData.get("url");
+  if (typeof cardId !== "string" || typeof rawUrl !== "string") return;
+
+  const url = sanitizeAttachmentUrl(rawUrl);
+  if (!url) return;
+
+  const user = await getCurrentUser();
+  const context = await cardEditAccess(cardId, user.id);
+  if (!context) return;
+
+  const name = optionalText(formData.get("name")) ?? attachmentNameFromUrl(url);
+
+  await prisma.attachment.create({
+    data: { cardId, type: "LINK", name, url, uploadedById: user.id },
+  });
+
+  revalidatePath(`/board/${context.boardId}`);
+}
+
+/**
+ * อัปโหลดไฟล์ขึ้น Vercel Blob — ต้องมี BLOB_READ_WRITE_TOKEN ถึงจะทำงาน
+ * เพดานขนาดเช็คซ้ำที่นี่ด้วย เพราะด่านฝั่ง client ถูกข้ามได้เสมอ
+ */
+export async function uploadAttachmentAction(formData: FormData) {
+  const cardId = formData.get("cardId");
+  const file = formData.get("file");
+  if (typeof cardId !== "string" || !(file instanceof File)) return;
+  if (!isWithinAttachmentSizeLimit(file.size)) return;
+  if (!process.env.BLOB_READ_WRITE_TOKEN) return;
+
+  const user = await getCurrentUser();
+  const context = await cardEditAccess(cardId, user.id);
+  if (!context) return;
+
+  // addRandomSuffix กันไฟล์ชื่อซ้ำทับกันเอง
+  const blob = await put(`cards/${cardId}/${file.name}`, file, {
+    access: "public",
+    addRandomSuffix: true,
+  });
+
+  await prisma.attachment.create({
+    data: {
+      cardId,
+      type: attachmentKindForUpload(file.name, file.type),
+      name: file.name,
+      url: blob.url,
+      size: file.size,
+      mimeType: file.type || null,
+      blobPathname: blob.pathname,
+      uploadedById: user.id,
+    },
+  });
+
+  revalidatePath(`/board/${context.boardId}`);
+}
+
+/** ลบไฟล์ออกจาก Blob ก่อนลบแถว ไม่งั้นไฟล์จะค้างกินโควตาโดยไม่มีใครรู้ */
+export async function deleteAttachmentAction(formData: FormData) {
+  const attachmentId = formData.get("attachmentId");
+  if (typeof attachmentId !== "string") return;
+
+  const user = await getCurrentUser();
+
+  const attachment = await prisma.attachment.findUniqueOrThrow({
+    where: { id: attachmentId },
+  });
+
+  const context = await cardEditAccess(attachment.cardId, user.id);
+  if (!context) return;
+
+  if (attachment.blobPathname && process.env.BLOB_READ_WRITE_TOKEN) {
+    await del(attachment.blobPathname);
+  }
+
+  await prisma.attachment.delete({ where: { id: attachmentId } });
+
+  revalidatePath(`/board/${context.boardId}`);
 }
 
 export async function addCommentAction(formData: FormData) {

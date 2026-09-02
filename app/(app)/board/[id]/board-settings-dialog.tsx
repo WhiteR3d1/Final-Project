@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { updateBoardAction } from "@/app/actions/board";
-import type { BoardInvite, Label, Priority } from "@/app/generated/prisma/client";
+import type { BoardInvite, BoardShareLink, Label, Priority } from "@/app/generated/prisma/client";
 import { BoardRole } from "@/app/generated/prisma/enums";
 import { Modal } from "@/app/components/ui/modal";
 import { ConfirmSubmitButton, SubmitButton } from "@/app/components/ui/buttons";
@@ -10,6 +10,7 @@ import { ColorPicker, PRESET_COLORS } from "@/app/components/ui/color-picker";
 import { IconPlus, IconSettings, IconTrash } from "@/app/components/ui/icons";
 import { createInviteAction, createLabelAction, deleteLabelAction } from "./actions";
 import { PriorityManager } from "./priority-manager";
+import { ShareLinkBox } from "./share-link-box";
 
 const inputClass =
   "border-line bg-panel-2 text-text placeholder:text-muted focus:border-accent rounded-lg border px-2.5 py-1.5 text-xs focus:outline-none";
@@ -23,6 +24,7 @@ export function BoardSettingsDialog({
   labels,
   priorities,
   invites,
+  shareLink,
   canEdit,
   canInvite,
 }: {
@@ -33,11 +35,16 @@ export function BoardSettingsDialog({
   labels: Label[];
   priorities: Priority[];
   invites: BoardInvite[];
+  shareLink: BoardShareLink | null;
   canEdit: boolean;
   canInvite: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [color, setColor] = useState(boardColor ?? PRESET_COLORS[0]);
+
+  // ปุ่มยืนยันของทั้งฟอร์มอยู่ล่างสุด แต่ section อื่นมีฟอร์มของตัวเองอยู่แล้วและ <form>
+  // ซ้อนกันไม่ได้ จึงผูกช่องกรอกเข้ากับฟอร์มที่ footer ด้วย attribute form="<id>" ของ HTML
+  const boardInfoFormId = `board-info-${boardId}`;
 
   return (
     <>
@@ -55,9 +62,9 @@ export function BoardSettingsDialog({
           {canInvite && (
             <section>
               <h3 className="text-text mb-2 text-sm font-medium">ข้อมูลบอร์ด</h3>
-              <form action={updateBoardAction} className="flex flex-col gap-2.5">
-                <input type="hidden" name="boardId" value={boardId} />
+              <div className="flex flex-col gap-2.5">
                 <input
+                  form={boardInfoFormId}
                   type="text"
                   name="name"
                   defaultValue={boardName}
@@ -66,8 +73,14 @@ export function BoardSettingsDialog({
                   aria-label="ชื่อบอร์ด"
                   className={`${inputClass} w-full font-medium`}
                 />
-                <ColorPicker name="color" value={color} onChange={setColor} />
+                <ColorPicker
+                  form={boardInfoFormId}
+                  name="color"
+                  value={color}
+                  onChange={setColor}
+                />
                 <textarea
+                  form={boardInfoFormId}
                   name="description"
                   defaultValue={boardDescription ?? ""}
                   placeholder="บอร์ดนี้ใช้ทำอะไร..."
@@ -76,13 +89,7 @@ export function BoardSettingsDialog({
                   aria-label="คำอธิบายบอร์ด"
                   className={`${inputClass} w-full resize-y`}
                 />
-                <SubmitButton
-                  pendingLabel="กำลังบันทึก..."
-                  className="bg-accent text-accent-ink self-end rounded-lg px-3 py-1.5 text-xs font-medium hover:brightness-110"
-                >
-                  บันทึกข้อมูลบอร์ด
-                </SubmitButton>
-              </form>
+              </div>
             </section>
           )}
 
@@ -149,6 +156,11 @@ export function BoardSettingsDialog({
           <section>
             <h3 className="text-text mb-2 text-sm font-medium">เชิญสมาชิก</h3>
             {canInvite ? (
+              <div className="flex flex-col gap-3">
+              <ShareLinkBox boardId={boardId} shareLink={shareLink} />
+
+              <div className="border-line border-t pt-3">
+              <p className="text-muted mb-2 text-xs">หรือเชิญรายอีเมล</p>
               <form action={createInviteAction} className="flex flex-wrap items-center gap-1.5">
                 <input type="hidden" name="boardId" value={boardId} />
                 <input
@@ -174,6 +186,8 @@ export function BoardSettingsDialog({
                   สร้างลิงก์เชิญ
                 </SubmitButton>
               </form>
+              </div>
+              </div>
             ) : (
               <p className="text-muted text-xs">เฉพาะเจ้าของบอร์ดเท่านั้นที่เชิญสมาชิกได้</p>
             )}
@@ -193,6 +207,21 @@ export function BoardSettingsDialog({
             )}
           </section>
         </div>
+
+        {/* ปุ่มของ section อื่นทำงานทันทีอยู่แล้ว จึงคงไว้ inline — footer มีแค่ปุ่มยืนยันของทั้งฟอร์ม */}
+        {canInvite && (
+          <footer className="border-line mt-6 flex items-center justify-end border-t pt-4">
+            <form id={boardInfoFormId} action={updateBoardAction}>
+              <input type="hidden" name="boardId" value={boardId} />
+              <SubmitButton
+                pendingLabel="กำลังบันทึก..."
+                className="bg-accent text-accent-ink rounded-lg px-5 py-1.5 text-sm font-medium hover:brightness-110"
+              >
+                บันทึกข้อมูลบอร์ด
+              </SubmitButton>
+            </form>
+          </footer>
+        )}
       </Modal>
     </>
   );

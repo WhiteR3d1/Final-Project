@@ -224,3 +224,48 @@ export function IconGrip(props: IconProps) {
     </svg>
   );
 }
+
+export function IconLink(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M10 13.5a3.5 3.5 0 0 0 5 0l3-3a3.5 3.5 0 0 0-5-5l-1.5 1.5" />
+      <path d="M14 10.5a3.5 3.5 0 0 0-5 0l-3 3a3.5 3.5 0 0 0 5 5l1.5-1.5" />
+    </svg>
+  );
+}
+
+export function IconCopy(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M15 5.5A1.5 1.5 0 0 0 13.5 4H6a2 2 0 0 0-2 2v7.5A1.5 1.5 0 0 0 5.5 15" />
+    </svg>
+  );
+}
+
+export function IconPaperclip(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M18.5 10.5 12 17a4 4 0 0 1-5.5-5.5l7-7a2.75 2.75 0 0 1 4 4l-7 7a1.5 1.5 0 0 1-2-2l6.5-6.5" />
+    </svg>
+  );
+}
+
+export function IconFile(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z" />
+      <path d="M13 3v6h6" />
+    </svg>
+  );
+}
+
+export function IconImage(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <circle cx="8.5" cy="9.5" r="1.5" />
+      <path d="m4 17 5-5 4.5 4.5L16 14l4 4" />
+    </svg>
+  );
+}

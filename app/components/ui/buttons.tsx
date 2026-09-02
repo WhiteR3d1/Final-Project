@@ -60,9 +60,14 @@ export function ConfirmSubmitButton({
     return () => clearTimeout(timer);
   }, [armed]);
 
+  // key ต่างกันสองจังหวะ **ห้ามเอาออก** — ถ้าใช้ key เดียวกัน React จะ patch ปุ่มเดิม
+  // จาก type="button" เป็น type="submit" ระหว่างจัดการคลิกแรก แล้วเบราว์เซอร์ค่อยทำ
+  // default action ของคลิกนั้นต่อ (ตอนนั้นปุ่มกลายเป็น submit ไปแล้ว) = กดครั้งเดียวลบเลย
+  // การเปลี่ยน key บังคับให้ React สร้าง DOM node ใหม่ ปุ่มเดิมหลุดจากฟอร์มก่อน default action จะทำงาน
   if (!armed) {
     return (
       <button
+        key="idle"
         type="button"
         onClick={() => setArmed(true)}
         title={title}
@@ -76,6 +81,7 @@ export function ConfirmSubmitButton({
 
   return (
     <button
+      key="confirm"
       type="submit"
       disabled={pending}
       autoFocus

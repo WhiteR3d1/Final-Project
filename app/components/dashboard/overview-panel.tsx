@@ -1,4 +1,5 @@
 import { getActivityDots, getProgressOverview, getTaskCounts } from "@/lib/dashboard";
+import { DUE_BUCKET_STYLE } from "@/lib/due";
 import { Panel } from "@/app/components/ui/panel";
 import { StatTile } from "@/app/components/ui/stat-tile";
 import { IconBoard, IconCheck, IconClock } from "@/app/components/ui/icons";
@@ -54,7 +55,8 @@ export async function OverviewPanel({ userId }: { userId: string }) {
           value={counts.dueToday}
           tone="warn"
           icon={<IconCheck size={16} />}
-          hint={`ภายใน 7 วัน ${counts.dueThisWeek} งาน`}
+          // ดึงคำจากแหล่งเดียวกับนิยามของกลุ่ม ป้ายชื่อกับตัวเลขจะได้ไม่หลุดคู่กัน
+          hint={`${DUE_BUCKET_STYLE.soon.title} ${counts.dueThisWeek} งาน`}
         />
         <StatTile
           label="เสร็จเดือนนี้"

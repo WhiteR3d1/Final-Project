@@ -29,5 +29,9 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|.*\.png$).*)"],
+  // ต้องใช้ \\. (สอง backslash) เพราะนี่เป็น string ธรรมดา ไม่ใช่ regex literal
+  // เขียน \. เฉย ๆ backslash จะหายไปตอน parse แล้วกลายเป็น . ที่แมตช์อะไรก็ได้
+  matcher: [
+    "/((?!api|_next/static|_next/image|favicon\\.ico|.*\\.(?:png|jpg|jpeg|svg|ico|webp)$).*)",
+  ],
 };

@@ -72,6 +72,8 @@ app/
       kanban-board.tsx        # client — drag & drop (@dnd-kit) + ฟิลเตอร์ + คุมว่าเปิดการ์ดไหน
       board-card.tsx          # client — การ์ดแบบกระชับบนคอลัมน์
       card-detail-dialog.tsx  # client — modal รายละเอียดการ์ด (แก้ทุกอย่างที่นี่)
+      card-create-dialog.tsx  # client — modal เพิ่มการ์ด (ชื่อ/รายละเอียด/กำหนดส่ง/priority)
+      list-dialog.tsx         # client — modal สร้าง+แก้ไขคอลัมน์ (ชื่อ/สี/คำอธิบาย)
       board-settings-dialog.tsx # client — modal ตั้งค่าบอร์ด (label / priority / เชิญสมาชิก)
       board-filters.tsx       # client — แถบฟิลเตอร์ (กรองฝั่ง client ล้วน)
       list-menu.tsx           # client — เมนู ⋯ ของคอลัมน์
@@ -93,7 +95,8 @@ lib/
   boards.ts                   # accessibleBoardWhere() + getUserBoards() + boardColor()
   dashboard.ts                # ตัวเลข/กราฟของ dashboard (query อ่านอย่างเดียว)
   due.ts                      # เทียบวันกำหนดส่งด้วย "คีย์วันที่" ตามเวลาไทย + สีของแต่ละกลุ่ม
-  gamification.ts             # กติกาแต้ม/เลเวล/สตรีค + เขียน-อ่าน ledger ของ PointEvent
+  points.ts                   # กติกาแต้ม/เลเวล/สตรีค (คณิตศาสตร์ล้วน ไม่แตะ DB → มี unit test)
+  gamification.ts             # อ่าน-เขียน ledger ของ PointEvent + re-export ค่าจาก points.ts
 
 types/
   next-auth.d.ts              # module augmentation เพิ่ม id เข้าไปใน Session["user"]
@@ -136,11 +139,30 @@ prisma/
   **ห้ามเอา business logic หรือ query DB มาไว้ในนี้**
 - **ชั้นใน (ของจริง)** — ทุก Server Action และทุก page ต้องเช็คเองเสมอ:
   ```ts
-  const user = await getCurrentUser();                      // ต้องล็อกอิน
+  const user = await getCurrentUser();                       // ต้องล็อกอิน
   const access = await assertBoardAccess(boardId, user.id);  // ต้องเป็น owner หรือ member
-  if (!access) return;
+  if (!access?.canEdit) return;   // action ที่แก้ข้อมูล
+  if (!access) notFound();        // page ที่แค่อ่าน (viewer เข้าได้)
   ```
   proxy ถูกข้ามได้ ห้ามพึ่งมันเป็นด่านเดียว
+
+### สิทธิ์ในบอร์ด (`BoardRole`)
+
+`assertBoardAccess()` คืน `{ id, ownerId, role, isOwner, canEdit }` มาให้เลย
+**ห้ามให้ action ไปตีความ role เอง** ใช้ `canEdit` ที่มันคำนวณมาแล้ว
+
+| | ดูบอร์ด | แก้การ์ด/คอลัมน์/ป้าย/priority | คอมเมนต์ | เชิญสมาชิก |
+|---|---|---|---|---|
+| OWNER (`Board.ownerId`) | ✓ | ✓ | ✓ | ✓ |
+| EDITOR (`BoardMember.role`) | ✓ | ✓ | ✓ | ✗ |
+| VIEWER (`BoardMember.role`) | ✓ | ✗ | ✗ | ✗ |
+
+- **action ที่แก้ข้อมูลต้องเช็ค `access.canEdit` ไม่ใช่แค่ `access` ไม่เป็น null**
+  เขียนใหม่แล้วลืมบรรทัดนี้ = viewer แก้ข้อมูลได้
+- role มาตอนเชิญ (`createInviteAction` → `BoardInvite.role` → `BoardMember.role`)
+  ค่าที่ไม่รู้จักตกเป็น `EDITOR` เท่ากับ default เดิมของ schema
+- ฝั่ง UI รับ prop `canEdit` ไล่ลงจาก `board/[id]/page.tsx` เพื่อ**ซ่อนปุ่มที่กดไม่ได้**
+  — เป็นแค่เรื่อง UX เท่านั้น client component ถูกข้ามได้เสมอ ด่านจริงคือฝั่ง action
 
 ### Environment variables
 
@@ -165,6 +187,8 @@ prisma/
 - **`Priority` ตั้งเองต่อบอร์ด** (ชื่อ+สีกำหนดได้) การ์ดผูกได้ทีละ 1 priority
 - **`List.isDoneList`** — คอลัมน์ "เสร็จสิ้น" ของบอร์ด มีได้บอร์ดละ 1 คอลัมน์
   (`setDoneListAction` ล้างธงเดิมก่อนตั้งใหม่เสมอ)
+- **`List.color` / `List.description`** ผู้ใช้ตั้งเองต่อคอลัมน์ (nullable ทั้งคู่)
+  คอลัมน์เก่าที่ยังไม่มีสีจะ fallback ไปใช้สีตามลำดับคอลัมน์ (`LIST_ACCENTS`)
 - **`Card.isCompleted` = สถานะตอนนี้ / `Card.completedAt` = เคยเสร็จหรือยัง**
   ลากออกจากคอลัมน์เสร็จสิ้นจะเซ็ต `isCompleted = false` แต่ **ห้ามล้าง `completedAt`**
 - id ทุกตัวเป็น `cuid()`
@@ -187,6 +211,11 @@ prisma/
   ซึ่งถูกเรียกจาก `moveCardAction` กับ `reorderCardAction` — ถ้าจะเพิ่มทางเข้าใหม่
   (เช่น ปุ่มติ๊กเสร็จ) ให้เรียกฟังก์ชันนี้ ห้ามเขียนกติกาแต้มซ้ำที่อื่น
 - action ที่ให้แต้มต้อง `revalidatePath("/")` ด้วย ไม่งั้นแถบโปรไฟล์บน dashboard ไม่อัปเดต
+
+**นิยามของกลุ่มกำหนดส่งมีที่เดียวคือ `dueBucket()` ใน `lib/due.ts`**
+(`overdue` / `today` / `soon` = พรุ่งนี้ถึงอีก 7 วัน / `later`) ที่ไหนจะนับเลขของกลุ่มไหน
+ต้องอิงช่วงเดียวกัน และดึงป้ายชื่อจาก `DUE_BUCKET_STYLE[bucket].title`
+ไม่ใช่ฮาร์ดโค้ดคำว่า "ภายใน 7 วัน" ซ้ำ — เคยหลุดคู่กันมาแล้วระหว่าง dashboard กับหน้ารายการ
 
 **วันกำหนดส่ง:** `Card.dueDate` เก็บเป็นเที่ยงคืน UTC (มาจาก `<input type="date">`)
 **ห้ามเทียบกับ `Date.now()` ตรง ๆ** เพราะไทยเป็น UTC+7 แล้วจะเพี้ยนข้ามวัน —
@@ -217,6 +246,15 @@ prisma/
 
 - การ์ดบนคอลัมน์โชว์แค่ข้อมูลสรุป (ชื่อ/กำหนดส่ง/priority/ผู้รับผิดชอบ/ความคืบหน้า checklist)
   **การแก้ไขทุกอย่างอยู่ใน `card-detail-dialog.tsx`** อย่าเอาฟอร์มกลับไปแปะบนการ์ดอีก
+- **การสร้าง/แก้ไขคอลัมน์กับการ์ดทำผ่าน modal เท่านั้น ห้ามเอาช่องกรอก inline กลับมา**
+  เพิ่มคอลัมน์/กดที่ชื่อคอลัมน์ → `list-dialog.tsx` (ตัวเดียวกัน ส่ง prop `list` = โหมดแก้ไข)
+  เพิ่มการ์ด → `card-create-dialog.tsx`
+- **คอลัมน์สูงเท่ากันเต็มจอ** (`h-[calc(100vh-20rem)]` ที่ตัวครอบ + `h-full` ที่คอลัมน์)
+  การ์ดเลื่อนอยู่ในคอลัมน์ ปุ่ม "เพิ่มการ์ด" ติดล่างคอลัมน์เสมอ
+  ที่ทำแบบนี้เพื่อให้บอร์ดกินจอแรกทั้งหมด แล้วแผง "กิจกรรมล่าสุด" ตกไปอยู่ใต้ fold
+- ใน `card-detail-dialog.tsx` ปุ่ม "บันทึก" กับ "ลบการ์ดนี้" อยู่ที่ footer ด้วยกัน
+  `<form>` ซ้อนกันไม่ได้ ช่องกรอกฝั่งซ้ายจึงผูกกับฟอร์มบันทึกด้วย attribute `form={editFormId}`
+  — **ย้ายช่องกรอกแล้วอย่าลืม `form` attribute** ไม่งั้นค่าจะไม่ถูกส่งไปกับ action
 - ฟิลเตอร์กรองฝั่ง client จาก props ที่มีอยู่ (ไม่ยิง DB เพิ่ม) และ **ต้องปิดการลากระหว่างกรอง**
   เพราะตำแหน่งใหม่คำนวณจากการ์ดเพื่อนบ้าน ถ้าบางใบถูกซ่อนตำแหน่งจะเพี้ยน
 - คำสั่งของคอลัมน์ (เปลี่ยนชื่อ / ตั้งเป็นคอลัมน์เสร็จสิ้น / ลบ) อยู่ในเมนู ⋯ ที่ `list-menu.tsx`
@@ -263,6 +301,7 @@ prisma/
 npm run dev                  # dev server
 npm run build                # production build (เช็คว่า prerender ผ่านไหม)
 npm run lint                 # eslint
+npm test                     # unit test (Node test runner ผ่าน tsx ไม่มี framework เพิ่ม)
 npx prisma migrate dev       # สร้าง migration + generate client
 npx prisma studio            # เปิดดูข้อมูลในฐานข้อมูล
 npx tsx prisma/seed.ts       # ใส่ข้อมูลตัวอย่าง
@@ -275,8 +314,8 @@ npx tsx prisma/seed.ts       # ใส่ข้อมูลตัวอย่า�
 
 - (แก้แล้ว) `kanban-board.tsx` เลิกใช้ `useEffect` sync props แล้ว เปลี่ยนไปเซ็ต state
   ระหว่าง render ตามแพตเทิร์นที่ React แนะนำ — `npm run lint` ตอนนี้ผ่านสะอาด ห้ามทำให้พังอีก
-- `proxy.ts` matcher ไม่ได้ยกเว้น `favicon.ico` เลยมี redirect ไป `/login` เปล่า ๆ อยู่บ้าง
-- ยังไม่มี automated test
+- test ครอบเฉพาะฟังก์ชันบริสุทธิ์ (`lib/due.ts`, `lib/points.ts`) ยังไม่มี integration test
+  ที่แตะ DB หรือ Server Action — ตรรกะสิทธิ์ (`canEdit`) จึงยังต้องทดสอบด้วยมือ
 - ลบการ์ดที่เคยได้แต้มแล้วสร้างใหม่ = ได้แต้มอีกรอบ (cuid เปลี่ยน) — ช่องโหว่ที่ยอมรับได้
 - ตอนตั้งคอลัมน์เสร็จสิ้น การ์ดที่อยู่ในคอลัมน์นั้นอยู่แล้วจะถูกมาร์กว่าเสร็จ แต่ไม่ได้แต้มย้อนหลัง
   (ไม่รู้ว่าใครเป็นคนทำ) และ `prisma/seed.ts` ใช้ `update: {}` จึงไม่เติม `dueDate`

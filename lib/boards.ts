@@ -24,18 +24,30 @@ export type BoardSummary = {
   updatedAt: Date;
 };
 
+type BoardRow = Prisma.BoardGetPayload<{
+  include: {
+    owner: { select: { name: true; email: true } };
+    _count: { select: { members: true } };
+    lists: { select: { id: true } };
+  };
+}>;
+
+type CardTally = { total: number; done: number };
+
 function toSummary(
-  board: Prisma.BoardGetPayload<{
-    include: {
-      owner: { select: { name: true; email: true } };
-      _count: { select: { members: true } };
-      lists: { select: { cards: { select: { isCompleted: true } } } };
-    };
-  }>,
-  userId: string
+  board: BoardRow,
+  userId: string,
+  tallyByList: Map<string, CardTally>
 ): BoardSummary {
-  const cards = board.lists.flatMap((list) => list.cards);
-  const doneCards = cards.filter((card) => card.isCompleted).length;
+  let totalCards = 0;
+  let doneCards = 0;
+  for (const list of board.lists) {
+    // คอลัมน์ที่ไม่มีการ์ดเลยจะไม่มีแถวใน groupBy — นับเป็น 0
+    const tally = tallyByList.get(list.id);
+    if (!tally) continue;
+    totalCards += tally.total;
+    doneCards += tally.done;
+  }
 
   return {
     id: board.id,
@@ -44,26 +56,48 @@ function toSummary(
     ownerName: board.owner.name ?? board.owner.email,
     isOwner: board.ownerId === userId,
     memberCount: board._count.members,
-    totalCards: cards.length,
+    totalCards,
     doneCards,
-    progress: cards.length > 0 ? (doneCards / cards.length) * 100 : 0,
+    progress: totalCards > 0 ? (doneCards / totalCards) * 100 : 0,
     updatedAt: board.updatedAt,
   };
 }
 
-/** บอร์ดทั้งหมดของผู้ใช้ พร้อมความคืบหน้า — cache() ทำให้ sidebar กับหน้าเพจใช้ query เดียวกัน */
+/**
+ * บอร์ดทั้งหมดของผู้ใช้ พร้อมความคืบหน้า — cache() ทำให้ sidebar กับหน้าเพจใช้ query เดียวกัน
+ *
+ * ให้ฐานข้อมูลนับการ์ดให้ผ่าน groupBy แทนการดึงการ์ดทุกใบมานับใน JS
+ * ข้อมูลที่วิ่งข้าม network จึงเป็น O(คอลัมน์) ไม่ใช่ O(การ์ด) — sidebar เรียกฟังก์ชันนี้ทุกหน้า
+ */
 export const getUserBoards = cache(async (userId: string) => {
-  const boards = await prisma.board.findMany({
-    where: accessibleBoardWhere(userId),
-    orderBy: { updatedAt: "desc" },
-    include: {
-      owner: { select: { name: true, email: true } },
-      _count: { select: { members: true } },
-      lists: { select: { cards: { select: { isCompleted: true } } } },
-    },
-  });
+  const where = accessibleBoardWhere(userId);
 
-  const summaries = boards.map((board) => toSummary(board, userId));
+  const [boards, cardCounts] = await Promise.all([
+    prisma.board.findMany({
+      where,
+      orderBy: { updatedAt: "desc" },
+      include: {
+        owner: { select: { name: true, email: true } },
+        _count: { select: { members: true } },
+        lists: { select: { id: true } },
+      },
+    }),
+    prisma.card.groupBy({
+      by: ["listId", "isCompleted"],
+      where: { list: { board: where } },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const tallyByList = new Map<string, CardTally>();
+  for (const row of cardCounts) {
+    const tally = tallyByList.get(row.listId) ?? { total: 0, done: 0 };
+    tally.total += row._count._all;
+    if (row.isCompleted) tally.done += row._count._all;
+    tallyByList.set(row.listId, tally);
+  }
+
+  const summaries = boards.map((board) => toSummary(board, userId, tallyByList));
 
   return {
     all: summaries,

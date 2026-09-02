@@ -19,6 +19,8 @@ export async function getTaskCounts(userId: string) {
   const tomorrow = dayStart(1);
   const inAWeek = dayStart(8);
 
+  // "ภายใน 7 วัน" ต้องหมายถึงกลุ่ม soon ของ dueBucket() เป๊ะ ๆ (พรุ่งนี้ถึงอีก 7 วัน)
+  // ไม่งั้นเลขบน dashboard จะไม่ตรงกับจำนวนการ์ดในกลุ่มเดียวกันที่ DueCards แสดงอยู่ข้าง ๆ
   const [overdue, dueToday, dueThisWeek, inProgress, completed, total] = await Promise.all([
     prisma.card.count({
       where: { ...inAccessibleBoards, isCompleted: false, dueDate: { lt: today } },
@@ -34,7 +36,7 @@ export async function getTaskCounts(userId: string) {
       where: {
         ...inAccessibleBoards,
         isCompleted: false,
-        dueDate: { gte: today, lt: inAWeek },
+        dueDate: { gte: tomorrow, lt: inAWeek },
       },
     }),
     prisma.card.count({ where: { ...inAccessibleBoards, isCompleted: false } }),

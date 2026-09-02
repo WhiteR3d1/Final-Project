@@ -1,26 +1,85 @@
 @import "tailwindcss";
 
+/*
+  ธีมของแอปคุมด้วย token เชิงความหมายชุดเดียว — ห้ามฮาร์ดโค้ดสีเทา/ดำในหน้าใด ๆ
+  ค่าเริ่มต้นคือโทน dark (ตามดีไซน์อ้างอิง) แล้ว override เป็นชุด light เมื่อระบบผู้ใช้ตั้งไว้แบบนั้น
+*/
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --surface: #0b0c0e;
+  --panel: #16181c;
+  --panel-2: #1f2226;
+  --line: #2a2e35;
+  --text: #f5f6f7;
+  --muted: #9ba1a9;
+  --accent: #b6f36b;
+  --accent-ink: #16210b;
+  --warn: #ffcc4d;
+  --warn-ink: #2a1f00;
+  --danger: #ff6b6b;
+  --danger-ink: #2c0b0b;
+  --info: #8b7cff;
+  --info-ink: #150f33;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
+@media (prefers-color-scheme: light) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --surface: #f4f5f7;
+    --panel: #ffffff;
+    --panel-2: #f1f2f4;
+    --line: #e4e7eb;
+    --text: #17181a;
+    --muted: #656c76;
+    --accent: #5a9c11;
+    --accent-ink: #ffffff;
+    --warn: #b45309;
+    --warn-ink: #ffffff;
+    --danger: #dc2626;
+    --danger-ink: #ffffff;
+    --info: #5b46e5;
+    --info-ink: #ffffff;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@theme inline {
+  --color-surface: var(--surface);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-line: var(--line);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-warn: var(--warn);
+  --color-warn-ink: var(--warn-ink);
+  --color-danger: var(--danger);
+  --color-danger-ink: var(--danger-ink);
+  --color-info: var(--info);
+  --color-info-ink: var(--info-ink);
+
+  /* Geist ไม่มีสระ/พยัญชนะไทย จึงต้องต่อท้ายด้วย Noto Sans Thai เสมอ */
+  --font-sans: var(--font-geist-sans), var(--font-noto-thai), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line) transparent;
+  }
+
+  body {
+    background: var(--surface);
+    color: var(--text);
+    font-family: var(--font-sans);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--accent);
+    color: var(--accent-ink);
+  }
 }

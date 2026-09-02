@@ -1,10 +1,11 @@
 "use server";
 
 import * as z from "zod";
-import bcrypt from "bcryptjs";
 import { redirect } from "next/navigation";
+import { AuthError } from "next-auth";
+import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
-import { createSession, deleteSession } from "@/lib/session";
+import { signIn, signOut } from "@/auth";
 
 export type AuthFormState =
   | {
@@ -17,12 +18,53 @@ export type AuthFormState =
     }
   | undefined;
 
+// กัน open redirect: รับเฉพาะ path ภายในเว็บเรา ("/board/x") ไม่รับ "//evil.com" หรือ URL เต็ม
 function resolveNextPath(formData: FormData) {
   const next = formData.get("next");
   if (typeof next === "string" && next.startsWith("/") && !next.startsWith("//")) {
     return next;
   }
   return "/";
+}
+
+/**
+ * การจัดการ error ของ signIn() ต้องทำสองชั้น เพราะมันไม่สม่ำเสมอ:
+ *  - เรียกจาก Server Action แล้วรหัสผ่านผิด -> โยน CredentialsSignin (ถ้าไม่จับ = 500)
+ *  - เรียกผ่าน HTTP route ปกติ -> ไม่โยน แต่คืน URL ที่ติด ?error= กลับมา
+ * และต้องใช้ redirect: false ด้วย ไม่งั้นตอนพลาด NextAuth จะ redirect กลับหน้า login เอง
+ * ทำให้ state ของ useActionState หายไป ผู้ใช้จะไม่เห็นข้อความบอกว่าผิดตรงไหน
+ */
+async function signInWithCredentials(
+  email: string,
+  password: string,
+  nextPath: string
+): Promise<AuthFormState> {
+  const wrongCredentials = { message: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" };
+  let resultUrl: string;
+
+  try {
+    // ส่ง redirectTo เป็น "/" คงที่ (ไม่ใช่ nextPath) เพื่อไม่ให้ query string จากผู้ใช้
+    // ปนเข้ามาใน URL ที่เราจะเอาไปเช็คว่ามี ?error= หรือเปล่า
+    resultUrl = await signIn("credentials", {
+      email,
+      password,
+      redirect: false,
+      redirectTo: "/",
+    });
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return wrongCredentials;
+    }
+    throw error;
+  }
+
+  if (new URL(resultUrl, "http://localhost").searchParams.has("error")) {
+    return wrongCredentials;
+  }
+
+  // สำเร็จแล้ว — signIn เซ็ต session cookie ให้เรียบร้อยก่อน return
+  // redirect() ต้องอยู่นอก try/catch เพราะมันทำงานด้วยการโยน NEXT_REDIRECT
+  redirect(nextPath);
 }
 
 const SignupFormSchema = z.object({
@@ -54,12 +96,12 @@ export async function signup(
 
   const passwordHash = await bcrypt.hash(password, 10);
 
-  const user = await prisma.user.create({
+  await prisma.user.create({
     data: { name, email, passwordHash },
   });
 
-  await createSession(user.id);
-  redirect(resolveNextPath(formData));
+  // สมัครเสร็จแล้วล็อกอินให้เลย ผ่าน provider เดียวกับหน้า login
+  return signInWithCredentials(email, password, resolveNextPath(formData));
 }
 
 const LoginFormSchema = z.object({
@@ -82,21 +124,9 @@ export async function login(
 
   const { email, password } = validated.data;
 
-  const user = await prisma.user.findUnique({ where: { email } });
-  if (!user?.passwordHash) {
-    return { message: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" };
-  }
-
-  const passwordMatches = await bcrypt.compare(password, user.passwordHash);
-  if (!passwordMatches) {
-    return { message: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" };
-  }
-
-  await createSession(user.id);
-  redirect(resolveNextPath(formData));
+  return signInWithCredentials(email, password, resolveNextPath(formData));
 }
 
 export async function logout() {
-  await deleteSession();
-  redirect("/login");
+  await signOut({ redirectTo: "/login" });
 }

@@ -29,20 +29,26 @@ async function main() {
   });
 
   const listSeeds = [
-    { id: "seed-list-todo", name: "To Do", position: 1 },
-    { id: "seed-list-doing", name: "Doing", position: 2 },
-    { id: "seed-list-done", name: "Done", position: 3 },
+    { id: "seed-list-todo", name: "To Do", position: 1, isDoneList: false },
+    { id: "seed-list-doing", name: "Doing", position: 2, isDoneList: false },
+    { id: "seed-list-done", name: "Done", position: 3, isDoneList: true },
   ];
 
   const [todo, doing, done] = await Promise.all(
     listSeeds.map((list) =>
       prisma.list.upsert({
         where: { id: list.id },
-        update: {},
+        update: { isDoneList: list.isDoneList },
         create: { ...list, boardId: board.id },
       })
     )
   );
+
+  const daysFromNow = (days: number) => {
+    const date = new Date();
+    date.setDate(date.getDate() + days);
+    return new Date(`${date.toISOString().slice(0, 10)}T00:00:00.000Z`);
+  };
 
   const cards = await Promise.all([
     prisma.card.upsert({
@@ -53,6 +59,7 @@ async function main() {
         title: "อ่านเอกสาร Prisma",
         listId: todo.id,
         position: 1,
+        dueDate: daysFromNow(3),
         createdById: user.id,
       },
     }),
@@ -64,6 +71,7 @@ async function main() {
         title: "ออกแบบหน้า Dashboard",
         listId: doing.id,
         position: 1,
+        dueDate: daysFromNow(-2),
         createdById: user.id,
       },
     }),
@@ -76,6 +84,7 @@ async function main() {
         listId: done.id,
         position: 1,
         isCompleted: true,
+        dueDate: daysFromNow(0),
         createdById: user.id,
       },
     }),

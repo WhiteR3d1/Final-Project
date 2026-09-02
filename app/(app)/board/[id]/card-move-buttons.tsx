@@ -7,28 +7,37 @@ export function CardMoveButtons({
   cardId,
   canMoveLeft,
   canMoveRight,
+  onAwarded,
 }: {
   cardId: string;
   canMoveLeft: boolean;
   canMoveRight: boolean;
+  onAwarded?: (points: number) => void;
 }) {
   const [isPending, startTransition] = useTransition();
+
+  function move(direction: "left" | "right") {
+    startTransition(async () => {
+      const result = await moveCardAction(cardId, direction);
+      if (result?.awarded) onAwarded?.(result.awarded);
+    });
+  }
 
   return (
     <div className="mt-2 flex gap-1">
       <button
         type="button"
         disabled={!canMoveLeft || isPending}
-        onClick={() => startTransition(() => moveCardAction(cardId, "left"))}
-        className="rounded px-1.5 py-0.5 text-xs text-zinc-500 hover:bg-zinc-200 disabled:opacity-30 dark:hover:bg-zinc-700"
+        onClick={() => move("left")}
+        className="border-line text-muted hover:bg-panel-2 hover:text-text rounded-lg border px-2 py-1 text-xs disabled:opacity-30"
       >
         ←
       </button>
       <button
         type="button"
         disabled={!canMoveRight || isPending}
-        onClick={() => startTransition(() => moveCardAction(cardId, "right"))}
-        className="rounded px-1.5 py-0.5 text-xs text-zinc-500 hover:bg-zinc-200 disabled:opacity-30 dark:hover:bg-zinc-700"
+        onClick={() => move("right")}
+        className="border-line text-muted hover:bg-panel-2 hover:text-text rounded-lg border px-2 py-1 text-xs disabled:opacity-30"
       >
         →
       </button>

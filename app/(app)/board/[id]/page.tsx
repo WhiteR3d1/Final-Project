@@ -76,7 +76,12 @@ export default async function BoardPage({ params }: { params: Promise<{ id: stri
           className="h-3 w-3 shrink-0 rounded-full"
           style={{ backgroundColor: boardColor(board) }}
         />
-        <h1 className="text-text text-xl font-bold tracking-tight">{board.name}</h1>
+        <div className="min-w-0">
+          <h1 className="text-text text-xl font-bold tracking-tight">{board.name}</h1>
+          {board.description && (
+            <p className="text-muted mt-0.5 text-xs">{board.description}</p>
+          )}
+        </div>
         <AvatarStack users={boardMembers} max={4} size={26} />
 
         {!access.canEdit && <Chip tone="info">ดูอย่างเดียว</Chip>}
@@ -90,6 +95,9 @@ export default async function BoardPage({ params }: { params: Promise<{ id: stri
           </Link>
           <BoardSettingsDialog
             boardId={board.id}
+            boardName={board.name}
+            boardColor={board.color}
+            boardDescription={board.description}
             labels={board.labels}
             priorities={board.priorities}
             invites={board.invites}

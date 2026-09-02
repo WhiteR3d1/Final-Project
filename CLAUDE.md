@@ -58,7 +58,7 @@ app/
   api/auth/[...nextauth]/     # route handler ของ NextAuth (re-export handlers เฉย ๆ)
   actions/
     auth.ts                   # server actions: signup / login / logout
-    board.ts                  # server action: สร้างบอร์ด
+    board.ts                  # server actions: สร้าง/แก้ไขบอร์ด (แก้ได้เฉพาะเจ้าของ)
 
   (app)/                      # route group ของหน้าที่ต้องล็อกอิน — ไม่เปลี่ยน URL
     layout.tsx                # โครงแอป: Sidebar + Topbar + <main>
@@ -82,8 +82,10 @@ app/
 
   components/
     ui/                       # primitive ใช้ซ้ำ: panel, stat-tile, chip, avatar,
-                              # progress-ring, bar-chart, modal, buttons, toast, icons
-    app-shell/                # sidebar, topbar, nav-link, mobile-nav
+                              # progress-ring, bar-chart, modal, buttons, toast, icons,
+                              # color-picker (จานสีกลาง ใช้ทั้งบอร์ดและคอลัมน์)
+    app-shell/                # sidebar, topbar, nav-link, mobile-nav,
+                              # create-board-dialog
     dashboard/                # game-stats, due-cards, task-row, overview-panel,
                               # weekly-chart, month-progress, board-cards
   generated/prisma/           # Prisma Client ที่ generate ออกมา — ห้าม commit, ห้ามแก้มือ
@@ -246,9 +248,18 @@ prisma/
 
 - การ์ดบนคอลัมน์โชว์แค่ข้อมูลสรุป (ชื่อ/กำหนดส่ง/priority/ผู้รับผิดชอบ/ความคืบหน้า checklist)
   **การแก้ไขทุกอย่างอยู่ใน `card-detail-dialog.tsx`** อย่าเอาฟอร์มกลับไปแปะบนการ์ดอีก
-- **การสร้าง/แก้ไขคอลัมน์กับการ์ดทำผ่าน modal เท่านั้น ห้ามเอาช่องกรอก inline กลับมา**
+- **การสร้าง/แก้ไขบอร์ด คอลัมน์ และการ์ด ทำผ่าน modal ทั้งหมด ห้ามเอาช่องกรอก inline กลับมา**
+  สร้างบอร์ด → `app-shell/create-board-dialog.tsx` / แก้บอร์ด → หัวข้อ "ข้อมูลบอร์ด"
+  ใน `board-settings-dialog.tsx` (เห็นเฉพาะเจ้าของ)
   เพิ่มคอลัมน์/กดที่ชื่อคอลัมน์ → `list-dialog.tsx` (ตัวเดียวกัน ส่ง prop `list` = โหมดแก้ไข)
   เพิ่มการ์ด → `card-create-dialog.tsx`
+  สีที่ผู้ใช้ตั้งเองใช้ `ColorPicker` จาก `components/ui/color-picker.tsx` เสมอ
+  **อย่าก๊อปจานสีไปไว้ที่อื่น** — เคยมีสองชุดแล้วเสี่ยงเพี้ยนออกจากกัน
+- `create-board-dialog.tsx` ปิดตัวเองด้วยการดู `usePathname()` เปลี่ยน ไม่ใช่รอ action คืนค่า
+  เพราะ `createBoardAction` จบด้วย `redirect()` ซึ่งโยน `NEXT_REDIRECT` โค้ดหลัง `await` จึงไม่ทำงาน
+  และ Sidebar อยู่ใน layout เลยไม่ถูก unmount ตอนเปลี่ยนหน้า
+- ปุ่มใน Sidebar ที่เปิด modal ต้อง `event.stopPropagation()` เพราะ `mobile-nav.tsx`
+  ปิด drawer เมื่อคลิกอะไรก็ตามข้างใน ถ้าปล่อยให้ลอยขึ้นไป modal จะกะพริบหายทันทีที่เปิด
 - **คอลัมน์สูงเท่ากันเต็มจอ** (`h-[calc(100vh-20rem)]` ที่ตัวครอบ + `h-full` ที่คอลัมน์)
   การ์ดเลื่อนอยู่ในคอลัมน์ ปุ่ม "เพิ่มการ์ด" ติดล่างคอลัมน์เสมอ
   ที่ทำแบบนี้เพื่อให้บอร์ดกินจอแรกทั้งหมด แล้วแผง "กิจกรรมล่าสุด" ตกไปอยู่ใต้ fold

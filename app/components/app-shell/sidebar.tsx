@@ -1,10 +1,10 @@
 import { getCurrentUser } from "@/lib/dal";
 import { boardColor, getUserBoards } from "@/lib/boards";
 import { logout } from "@/app/actions/auth";
-import { createBoardAction } from "@/app/actions/board";
 import { Avatar, displayName } from "@/app/components/ui/avatar";
-import { IconCalendar, IconHome, IconLogout, IconPlus } from "@/app/components/ui/icons";
+import { IconCalendar, IconHome, IconLogout } from "@/app/components/ui/icons";
 import { SubmitButton } from "@/app/components/ui/buttons";
+import { CreateBoardDialog } from "./create-board-dialog";
 import { BoardNavLink, NavLink } from "./nav-link";
 
 /**
@@ -72,22 +72,9 @@ export async function Sidebar({ variant = "fixed" }: { variant?: "fixed" | "draw
           )}
         </div>
 
-        <form action={createBoardAction} className="mt-2 flex items-center gap-1.5 px-1">
-          <input
-            type="text"
-            name="name"
-            placeholder="สร้างบอร์ดใหม่"
-            autoComplete="off"
-            required
-            className="border-line bg-panel-2 text-text placeholder:text-muted focus:border-accent min-w-0 flex-1 rounded-lg border px-2.5 py-1.5 text-xs focus:outline-none"
-          />
-          <SubmitButton
-            ariaLabel="สร้างบอร์ด"
-            className="bg-accent text-accent-ink hover:brightness-110 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
-          >
-            <IconPlus size={16} />
-          </SubmitButton>
-        </form>
+        <div className="px-1">
+          <CreateBoardDialog />
+        </div>
       </div>
 
       <div className="border-line flex items-center gap-2 border-t px-2 pt-3">

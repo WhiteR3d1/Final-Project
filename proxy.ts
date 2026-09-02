@@ -16,7 +16,8 @@ export default auth((req) => {
 
   if (!isPublicRoute && !isLoggedIn) {
     const loginUrl = new URL("/login", req.nextUrl);
-    loginUrl.searchParams.set("next", path);
+    // ต้องพก query string ไปด้วย ไม่งั้น /search?q=... กลับมาแล้วคำค้นหาย
+    loginUrl.searchParams.set("next", path + req.nextUrl.search);
     return NextResponse.redirect(loginUrl);
   }
 

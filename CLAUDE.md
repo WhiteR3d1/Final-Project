@@ -50,27 +50,50 @@ proxy.ts                      # กันหน้าที่ต้องล็
 prisma.config.ts              # config ของ Prisma CLI
 
 app/
-  layout.tsx                  # root layout
-  page.tsx                    # Dashboard — บอร์ดของฉัน + บอร์ดที่ถูกแชร์มา
+  layout.tsx                  # root layout (ฟอนต์ Geist + Noto Sans Thai, ครอบทุกหน้า)
+  globals.css                 # design token ทั้งระบบ (ดูหัวข้อ UI ด้านล่าง)
   login/page.tsx              # ฟอร์มล็อกอิน (client component + useActionState)
   signup/page.tsx             # ฟอร์มสมัครสมาชิก
+  invite/[token]/             # หน้ารับคำเชิญเข้าบอร์ด + action ตอบรับ
+  api/auth/[...nextauth]/     # route handler ของ NextAuth (re-export handlers เฉย ๆ)
   actions/
     auth.ts                   # server actions: signup / login / logout
     board.ts                  # server action: สร้างบอร์ด
-  board/[id]/
-    page.tsx                  # หน้าบอร์ด (server component ดึงข้อมูลเอง)
-    actions.ts                # server actions ของ list/card/label/priority/invite ทั้งหมด
-    kanban-board.tsx          # client component — drag & drop ด้วย @dnd-kit
-    card-move-buttons.tsx     # ปุ่มย้ายการ์ด (fallback สำหรับคนที่ลากไม่ได้)
-    priority-manager.tsx      # จัดการ priority ของบอร์ด
-  invite/[token]/             # หน้ารับคำเชิญเข้าบอร์ด + action ตอบรับ
-  api/auth/[...nextauth]/     # route handler ของ NextAuth (re-export handlers เฉย ๆ)
+
+  (app)/                      # route group ของหน้าที่ต้องล็อกอิน — ไม่เปลี่ยน URL
+    layout.tsx                # โครงแอป: Sidebar + Topbar + <main>
+    page.tsx                  # Dashboard                    → "/"
+    search/page.tsx           # ผลการค้นหาข้ามบอร์ด (?q=)     → "/search"
+    calendar/page.tsx         # ปฏิทินกำหนดส่ง (?m=, ?board=) → "/calendar"
+    board/[id]/
+      page.tsx                # หน้าบอร์ด (server component ดึงข้อมูลเอง)
+      actions.ts              # server actions ของ list/card/label/priority/invite ทั้งหมด
+      types.ts                # ListWithCards / CardWithRelations ใช้ร่วมกันทั้งโฟลเดอร์
+      kanban-board.tsx        # client — drag & drop (@dnd-kit) + ฟิลเตอร์ + คุมว่าเปิดการ์ดไหน
+      board-card.tsx          # client — การ์ดแบบกระชับบนคอลัมน์
+      card-detail-dialog.tsx  # client — modal รายละเอียดการ์ด (แก้ทุกอย่างที่นี่)
+      board-settings-dialog.tsx # client — modal ตั้งค่าบอร์ด (label / priority / เชิญสมาชิก)
+      board-filters.tsx       # client — แถบฟิลเตอร์ (กรองฝั่ง client ล้วน)
+      list-menu.tsx           # client — เมนู ⋯ ของคอลัมน์
+      card-move-buttons.tsx   # ปุ่มย้ายการ์ด (fallback ของการลาก อยู่ใน modal)
+      priority-manager.tsx    # จัดการ priority ของบอร์ด (อยู่ใน modal ตั้งค่า)
+
+  components/
+    ui/                       # primitive ใช้ซ้ำ: panel, stat-tile, chip, avatar,
+                              # progress-ring, bar-chart, modal, buttons, toast, icons
+    app-shell/                # sidebar, topbar, nav-link, mobile-nav
+    dashboard/                # game-stats, due-cards, task-row, overview-panel,
+                              # weekly-chart, month-progress, board-cards
   generated/prisma/           # Prisma Client ที่ generate ออกมา — ห้าม commit, ห้ามแก้มือ
 
 lib/
   prisma.ts                   # Prisma Client singleton (กัน hot-reload สร้างซ้ำ)
   dal.ts                      # verifySession() / getCurrentUser() — ประตูเดียวสู่ตัวตนผู้ใช้
   board-access.ts             # assertBoardAccess() — เช็คสิทธิ์ owner/member ของบอร์ด
+  boards.ts                   # accessibleBoardWhere() + getUserBoards() + boardColor()
+  dashboard.ts                # ตัวเลข/กราฟของ dashboard (query อ่านอย่างเดียว)
+  due.ts                      # เทียบวันกำหนดส่งด้วย "คีย์วันที่" ตามเวลาไทย + สีของแต่ละกลุ่ม
+  gamification.ts             # กติกาแต้ม/เลเวล/สตรีค + เขียน-อ่าน ledger ของ PointEvent
 
 types/
   next-auth.d.ts              # module augmentation เพิ่ม id เข้าไปใน Session["user"]
@@ -131,7 +154,7 @@ prisma/
 
 `User` → `Board` (owner) → `List` → `Card`
 เสริมด้วย `BoardMember` (แชร์บอร์ด), `BoardInvite` (เชิญด้วย token),
-`Label`, `Priority`, `Checklist`/`ChecklistItem`, `Comment`, `Activity`
+`Label`, `Priority`, `Checklist`/`ChecklistItem`, `Comment`, `Activity`, `PointEvent` (ledger แต้ม)
 
 จุดที่ต้องรู้:
 
@@ -140,7 +163,63 @@ prisma/
 - **`position` เป็น `Float` ไม่ใช่ `Int`** — เวลาลากแทรกกลางให้คำนวณค่าระหว่างเพื่อนบ้าน
   จะได้ไม่ต้องเขียนลำดับใหม่ทั้งคอลัมน์
 - **`Priority` ตั้งเองต่อบอร์ด** (ชื่อ+สีกำหนดได้) การ์ดผูกได้ทีละ 1 priority
+- **`List.isDoneList`** — คอลัมน์ "เสร็จสิ้น" ของบอร์ด มีได้บอร์ดละ 1 คอลัมน์
+  (`setDoneListAction` ล้างธงเดิมก่อนตั้งใหม่เสมอ)
+- **`Card.isCompleted` = สถานะตอนนี้ / `Card.completedAt` = เคยเสร็จหรือยัง**
+  ลากออกจากคอลัมน์เสร็จสิ้นจะเซ็ต `isCompleted = false` แต่ **ห้ามล้าง `completedAt`**
 - id ทุกตัวเป็น `cuid()`
+
+---
+
+## Gamification + กำหนดส่ง
+
+**กติกาแต้ม (อยู่ที่ `lib/gamification.ts` ที่เดียว):** ทำการ์ดเสร็จ +10, ส่งทันกำหนด +5,
+ส่งช้าไม่หักแต้ม เลเวลคำนวณจากแต้มสะสม สตรีคนับจากวันที่มี `PointEvent` ติดต่อกัน (เวลาไทย)
+
+- **`PointEvent` คือแหล่งความจริงเดียว ไม่มีตาราง cache ยอดรวม** — แต้ม/เลเวล/สตรีค
+  คำนวณสดจาก ledger ทุกครั้งที่ render
+- **`@@unique([cardId, type])` คือกลไกกันฟาร์มแต้ม** การ์ด 1 ใบให้แต้มแต่ละชนิดได้ครั้งเดียว
+  ตลอดชีพ ลากเข้า-ออก-เข้าคอลัมน์เสร็จสิ้นกี่รอบก็ไม่ได้แต้มเพิ่ม
+  **จึงไม่ต้องล็อกการ์ดที่เสร็จแล้ว** (ล็อกจะขัดกับธรรมชาติของ kanban)
+  การ์ดที่เคยได้แต้มแล้วถูกลากออกจะขึ้นชิป "ได้แต้มแล้ว"
+- **แต้มได้แล้วไม่ริบคืน** ลากออกจากคอลัมน์เสร็จสิ้นไม่ลบ `PointEvent` และไม่ล้าง `completedAt`
+- ตรรกะทั้งหมดรวมอยู่ที่ `syncCardCompletion()` ใน `app/board/[id]/actions.ts`
+  ซึ่งถูกเรียกจาก `moveCardAction` กับ `reorderCardAction` — ถ้าจะเพิ่มทางเข้าใหม่
+  (เช่น ปุ่มติ๊กเสร็จ) ให้เรียกฟังก์ชันนี้ ห้ามเขียนกติกาแต้มซ้ำที่อื่น
+- action ที่ให้แต้มต้อง `revalidatePath("/")` ด้วย ไม่งั้นแถบโปรไฟล์บน dashboard ไม่อัปเดต
+
+**วันกำหนดส่ง:** `Card.dueDate` เก็บเป็นเที่ยงคืน UTC (มาจาก `<input type="date">`)
+**ห้ามเทียบกับ `Date.now()` ตรง ๆ** เพราะไทยเป็น UTC+7 แล้วจะเพี้ยนข้ามวัน —
+ให้ใช้ `dateKey()` / `dueBucket()` / `isOnTime()` จาก `lib/due.ts` เท่านั้น
+
+---
+
+## UI / ธีม (สำคัญ)
+
+หน้าตาทั้งระบบอิงดีไซน์อ้างอิงแนว dashboard โทนมืด — **สีทุกจุดมาจาก token ใน `app/globals.css`**
+
+- token ที่ใช้ได้: `surface` (พื้นหน้า) `panel` (การ์ด) `panel-2` (ชั้นยกขึ้น/ช่องกรอก)
+  `line` (เส้นขอบ) `text` `muted` `accent` `warn` `danger` `info` (+ `*-ink` สำหรับตัวอักษรบนพื้นสีนั้น)
+  เขียนเป็น utility ปกติ เช่น `bg-panel border-line text-muted`
+- **ห้ามฮาร์ดโค้ด `zinc-*` / `bg-white` / `text-black` หรือเขียน `dark:` เพิ่ม** — token สลับ
+  light/dark ให้เองผ่าน `prefers-color-scheme` ถ้าต้องการสีใหม่ให้เพิ่ม token ก่อน
+  ข้อยกเว้นเดียวคือสีที่ผู้ใช้ตั้งเองใน DB (`label.color`, `priority.color`) ให้ใส่ผ่าน `style`
+- ห้ามเพิ่มไลบรารี UI/กราฟ: กราฟใช้ `components/ui/bar-chart.tsx` กับ `progress-ring.tsx` (SVG/CSS ล้วน)
+  modal ใช้ `components/ui/modal.tsx` ที่ครอบ `<dialog>` ของเบราว์เซอร์ (ได้ Esc + focus trap ฟรี)
+- ปุ่มที่ยิง Server Action ให้ใช้ `SubmitButton` (มี pending state) และปุ่มลบให้ใช้
+  `ConfirmSubmitButton` (กดสองจังหวะ) จาก `components/ui/buttons.tsx` — **ห้ามใช้ `window.confirm`**
+- ไอคอนทั้งหมดอยู่ที่ `components/ui/icons.tsx`
+  **ห้ามตั้งชื่อไฟล์ว่า `icon.tsx` ในโฟลเดอร์ `app/`** เพราะ Next จะมองว่าเป็น metadata route
+  แล้ว build พังด้วย "Default export is missing"
+- ตัวอักษรไทยมาจาก `Noto_Sans_Thai` (`next/font/google`) ที่ต่อท้าย Geist ใน `--font-sans`
+
+### หน้าบอร์ด
+
+- การ์ดบนคอลัมน์โชว์แค่ข้อมูลสรุป (ชื่อ/กำหนดส่ง/priority/ผู้รับผิดชอบ/ความคืบหน้า checklist)
+  **การแก้ไขทุกอย่างอยู่ใน `card-detail-dialog.tsx`** อย่าเอาฟอร์มกลับไปแปะบนการ์ดอีก
+- ฟิลเตอร์กรองฝั่ง client จาก props ที่มีอยู่ (ไม่ยิง DB เพิ่ม) และ **ต้องปิดการลากระหว่างกรอง**
+  เพราะตำแหน่งใหม่คำนวณจากการ์ดเพื่อนบ้าน ถ้าบางใบถูกซ่อนตำแหน่งจะเพี้ยน
+- คำสั่งของคอลัมน์ (เปลี่ยนชื่อ / ตั้งเป็นคอลัมน์เสร็จสิ้น / ลบ) อยู่ในเมนู ⋯ ที่ `list-menu.tsx`
 
 ---
 
@@ -194,7 +273,11 @@ npx tsx prisma/seed.ts       # ใส่ข้อมูลตัวอย่า�
 
 ## หนี้ทางเทคนิคที่รู้อยู่แล้ว
 
-- `app/board/[id]/kanban-board.tsx` มี eslint error `react-hooks/set-state-in-effect`
-  (sync props ลง state ผ่าน `useEffect`) — ยังไม่ได้แก้
+- (แก้แล้ว) `kanban-board.tsx` เลิกใช้ `useEffect` sync props แล้ว เปลี่ยนไปเซ็ต state
+  ระหว่าง render ตามแพตเทิร์นที่ React แนะนำ — `npm run lint` ตอนนี้ผ่านสะอาด ห้ามทำให้พังอีก
 - `proxy.ts` matcher ไม่ได้ยกเว้น `favicon.ico` เลยมี redirect ไป `/login` เปล่า ๆ อยู่บ้าง
 - ยังไม่มี automated test
+- ลบการ์ดที่เคยได้แต้มแล้วสร้างใหม่ = ได้แต้มอีกรอบ (cuid เปลี่ยน) — ช่องโหว่ที่ยอมรับได้
+- ตอนตั้งคอลัมน์เสร็จสิ้น การ์ดที่อยู่ในคอลัมน์นั้นอยู่แล้วจะถูกมาร์กว่าเสร็จ แต่ไม่ได้แต้มย้อนหลัง
+  (ไม่รู้ว่าใครเป็นคนทำ) และ `prisma/seed.ts` ใช้ `update: {}` จึงไม่เติม `dueDate`
+  ให้การ์ด seed ที่มีอยู่ก่อนแล้ว

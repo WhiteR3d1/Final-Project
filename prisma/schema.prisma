@@ -25,6 +25,7 @@ model User {
   assignments  CardAssignee[]
   comments     Comment[]
   activities   Activity[]
+  pointEvents  PointEvent[]
 }
 
 model Board {
@@ -43,6 +44,7 @@ model Board {
   members    BoardMember[]
   invites    BoardInvite[]
   activities Activity[]
+  pointEvents PointEvent[]
 }
 
 enum BoardRole {
@@ -86,11 +88,13 @@ model BoardInvite {
 }
 
 model List {
-  id       String  @id @default(cuid())
-  boardId  String
-  name     String
-  position Float
-  color    String?
+  id         String  @id @default(cuid())
+  boardId    String
+  name       String
+  position   Float
+  color      String?
+  // คอลัมน์ที่ถือว่า "เสร็จสิ้น" ของบอร์ด — บอร์ดละ 1 คอลัมน์เท่านั้น
+  isDoneList Boolean @default(false)
 
   board Board  @relation(fields: [boardId], references: [id], onDelete: Cascade)
   cards Card[]
@@ -104,6 +108,8 @@ model Card {
   position    Float
   dueDate     DateTime?
   isCompleted Boolean   @default(false)
+  // เวลาที่ทำเสร็จ "ครั้งแรก" — ตั้งครั้งเดียว ไม่ล้างตอนลากออกจาก Done
+  completedAt DateTime?
   priorityId  String?
   createdById String
   createdAt   DateTime  @default(now())
@@ -115,8 +121,9 @@ model Card {
   labels     CardLabel[]
   assignees  CardAssignee[]
   checklists Checklist[]
-  comments   Comment[]
-  activities Activity[]
+  comments    Comment[]
+  activities  Activity[]
+  pointEvents PointEvent[]
 }
 
 model Label {
@@ -221,4 +228,29 @@ model Activity {
   user   User    @relation(fields: [userId], references: [id])
   card   Card?   @relation(fields: [cardId], references: [id])
   cardId String?
+}
+
+enum PointEventType {
+  CARD_COMPLETED
+  ON_TIME_BONUS
+}
+
+// ledger ของแต้ม — แหล่งความจริงเดียว ไม่มีตาราง cache ยอดรวม
+// unique([cardId, type]) คือกลไกกันฟาร์มแต้ม: ลากเข้า Done ซ้ำกี่รอบก็ได้แต้มครั้งเดียว
+model PointEvent {
+  id        String         @id @default(cuid())
+  userId    String
+  boardId   String
+  cardId    String?
+  type      PointEventType
+  points    Int
+  createdAt DateTime       @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  // การ์ดถูกลบแล้วแต้มยังอยู่ (สอดคล้องกับกติกา "ได้แล้วไม่ริบคืน")
+  card  Card? @relation(fields: [cardId], references: [id], onDelete: SetNull)
+
+  @@unique([cardId, type])
+  @@index([userId, createdAt])
 }

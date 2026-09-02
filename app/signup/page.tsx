@@ -17,65 +17,65 @@ function SignupForm() {
       <form action={action} className="flex flex-col gap-4">
         <input type="hidden" name="next" value={next} />
         <div>
-          <label htmlFor="name" className="mb-1 block text-sm text-zinc-600 dark:text-zinc-400">
+          <label htmlFor="name" className="text-muted mb-1 block text-sm">
             ชื่อ
           </label>
           <input
             id="name"
             name="name"
-            className="w-full rounded border border-black/10 bg-transparent px-3 py-2 text-sm focus:outline-none dark:border-white/10"
+            className="border-line bg-panel-2 text-text focus:border-accent w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
           />
           {state?.errors?.name && (
-            <p className="mt-1 text-xs text-red-500">{state.errors.name[0]}</p>
+            <p className="text-danger mt-1 text-xs">{state.errors.name[0]}</p>
           )}
         </div>
 
         <div>
-          <label htmlFor="email" className="mb-1 block text-sm text-zinc-600 dark:text-zinc-400">
+          <label htmlFor="email" className="text-muted mb-1 block text-sm">
             อีเมล
           </label>
           <input
             id="email"
             name="email"
             type="email"
-            className="w-full rounded border border-black/10 bg-transparent px-3 py-2 text-sm focus:outline-none dark:border-white/10"
+            className="border-line bg-panel-2 text-text focus:border-accent w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
           />
           {state?.errors?.email && (
-            <p className="mt-1 text-xs text-red-500">{state.errors.email[0]}</p>
+            <p className="text-danger mt-1 text-xs">{state.errors.email[0]}</p>
           )}
         </div>
 
         <div>
-          <label htmlFor="password" className="mb-1 block text-sm text-zinc-600 dark:text-zinc-400">
+          <label htmlFor="password" className="text-muted mb-1 block text-sm">
             รหัสผ่าน
           </label>
           <input
             id="password"
             name="password"
             type="password"
-            className="w-full rounded border border-black/10 bg-transparent px-3 py-2 text-sm focus:outline-none dark:border-white/10"
+            className="border-line bg-panel-2 text-text focus:border-accent w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
           />
           {state?.errors?.password && (
-            <p className="mt-1 text-xs text-red-500">{state.errors.password[0]}</p>
+            <p className="text-danger mt-1 text-xs">{state.errors.password[0]}</p>
           )}
         </div>
 
-        {state?.message && <p className="text-sm text-red-500">{state.message}</p>}
+        {state?.message && <p className="text-danger text-sm">{state.message}</p>}
 
         <button
           type="submit"
           disabled={pending}
-          className="mt-2 rounded bg-foreground px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+          className="bg-accent text-accent-ink mt-2 rounded-lg px-4 py-2 text-sm font-semibold hover:brightness-110 disabled:opacity-50"
         >
           {pending ? "กำลังสมัคร..." : "สมัครสมาชิก"}
         </button>
       </form>
 
-      <p className="mt-4 text-sm text-zinc-500">
+      <p className="text-muted mt-4 text-center text-sm">
         มีบัญชีอยู่แล้ว?{" "}
         <Link
           href={next ? `/login?next=${encodeURIComponent(next)}` : "/login"}
-          className="underline"
+          className="text-accent underline"
         >
           เข้าสู่ระบบ
         </Link>

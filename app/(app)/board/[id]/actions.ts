@@ -6,6 +6,69 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/dal";
 import { assertBoardAccess } from "@/lib/board-access";
 import { ActivityType, InviteStatus } from "@/app/generated/prisma/enums";
+import { awardCardCompletion } from "@/lib/gamification";
+
+type CardForCompletion = {
+  id: string;
+  title: string;
+  isCompleted: boolean;
+  completedAt: Date | null;
+  dueDate: Date | null;
+};
+
+/**
+ * ซิงก์สถานะ "เสร็จ" ของการ์ดกับคอลัมน์ที่มันไปอยู่ แล้วคืนแต้มที่เพิ่งได้ (0 = ไม่ได้แต้มใหม่)
+ *
+ * ลากออกจากคอลัมน์เสร็จสิ้นได้ตามปกติ — การ์ดกลับเป็น "กำลังทำ" แต่ completedAt กับ PointEvent
+ * ยังอยู่ครบ แต้มที่ได้ไปแล้วจึงไม่ถูกริบ และการลากกลับเข้าไปใหม่ก็ไม่ได้แต้มซ้ำ
+ */
+async function syncCardCompletion(
+  card: CardForCompletion,
+  targetList: { isDoneList: boolean },
+  boardId: string,
+  user: { id: string; name: string | null; email: string }
+): Promise<number> {
+  if (targetList.isDoneList && !card.isCompleted) {
+    const completedAt = card.completedAt ?? new Date();
+
+    const awarded = await prisma.$transaction(async (tx) => {
+      await tx.card.update({
+        where: { id: card.id },
+        data: { isCompleted: true, completedAt },
+      });
+
+      return awardCardCompletion(tx, {
+        userId: user.id,
+        boardId,
+        card: { id: card.id, dueDate: card.dueDate, completedAt: card.completedAt },
+        completedAt,
+      });
+    });
+
+    await prisma.activity.create({
+      data: {
+        boardId,
+        cardId: card.id,
+        userId: user.id,
+        type: ActivityType.CARD_COMPLETED,
+        message: `${user.name ?? user.email} completed "${card.title}"${
+          awarded > 0 ? ` (+${awarded} points)` : ""
+        }`,
+      },
+    });
+
+    return awarded;
+  }
+
+  if (!targetList.isDoneList && card.isCompleted) {
+    await prisma.card.update({
+      where: { id: card.id },
+      data: { isCompleted: false },
+    });
+  }
+
+  return 0;
+}
 
 export async function createListAction(formData: FormData) {
   const boardId = formData.get("boardId");
@@ -185,7 +248,12 @@ export async function moveCardAction(cardId: string, direction: "left" | "right"
     },
   });
 
+  const awarded = await syncCardCompletion(card, targetList, card.list.boardId, user);
+
   revalidatePath(`/board/${card.list.boardId}`);
+  if (awarded > 0) revalidatePath("/");
+
+  return { awarded };
 }
 
 export async function reorderCardAction(
@@ -229,7 +297,12 @@ export async function reorderCardAction(
     });
   }
 
+  const awarded = await syncCardCompletion(card, targetList, card.list.boardId, user);
+
   revalidatePath(`/board/${card.list.boardId}`);
+  if (awarded > 0) revalidatePath("/");
+
+  return { awarded };
 }
 
 export async function updateCardAction(formData: FormData) {
@@ -468,6 +541,21 @@ export async function createLabelAction(formData: FormData) {
   revalidatePath(`/board/${boardId}`);
 }
 
+export async function deleteLabelAction(formData: FormData) {
+  const labelId = formData.get("labelId");
+  if (typeof labelId !== "string") return;
+
+  const user = await getCurrentUser();
+
+  const label = await prisma.label.findUniqueOrThrow({ where: { id: labelId } });
+  const access = await assertBoardAccess(label.boardId, user.id);
+  if (!access) return;
+
+  await prisma.label.delete({ where: { id: labelId } });
+
+  revalidatePath(`/board/${label.boardId}`);
+}
+
 export async function createPriorityAction(formData: FormData) {
   const boardId = formData.get("boardId");
   const name = formData.get("name");
@@ -688,4 +776,55 @@ export async function addCommentAction(formData: FormData) {
   });
 
   revalidatePath(`/board/${boardId}`);
+}
+
+/**
+ * ตั้ง/ยกเลิกคอลัมน์ "เสร็จสิ้น" ของบอร์ด — บอร์ดละ 1 คอลัมน์ (ล้างของเดิมก่อนเสมอ)
+ * การ์ดที่อยู่ในคอลัมน์นั้นตอนตั้งธงจะถือว่าเสร็จทันที แต่ไม่ย้อนให้แต้ม เพราะไม่รู้ว่าใครเป็นคนทำ
+ */
+export async function setDoneListAction(formData: FormData) {
+  const listId = formData.get("listId");
+  if (typeof listId !== "string") return;
+
+  const user = await getCurrentUser();
+
+  const list = await prisma.list.findUniqueOrThrow({ where: { id: listId } });
+  const access = await assertBoardAccess(list.boardId, user.id);
+  if (!access) return;
+
+  const nextValue = !list.isDoneList;
+
+  await prisma.$transaction(async (tx) => {
+    // ย้ายธงไปคอลัมน์อื่น (หรือยกเลิก) ต้องคืนการ์ดในคอลัมน์เดิมเป็น "กำลังทำ" ด้วย
+    // ไม่งั้นการ์ดจะค้างสถานะเสร็จอยู่ในคอลัมน์ที่ไม่ใช่คอลัมน์เสร็จสิ้นแล้ว
+    const previousDoneLists = await tx.list.findMany({
+      where: { boardId: list.boardId, isDoneList: true },
+      select: { id: true },
+    });
+
+    if (previousDoneLists.length > 0) {
+      await tx.list.updateMany({
+        where: { boardId: list.boardId },
+        data: { isDoneList: false },
+      });
+      await tx.card.updateMany({
+        where: {
+          listId: { in: previousDoneLists.map((previous) => previous.id) },
+          isCompleted: true,
+        },
+        data: { isCompleted: false },
+      });
+    }
+
+    if (nextValue) {
+      await tx.list.update({ where: { id: listId }, data: { isDoneList: true } });
+      await tx.card.updateMany({
+        where: { listId, isCompleted: false },
+        data: { isCompleted: true },
+      });
+    }
+  });
+
+  revalidatePath(`/board/${list.boardId}`);
+  revalidatePath("/");
 }

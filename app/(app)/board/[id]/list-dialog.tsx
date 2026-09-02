@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Modal } from "@/app/components/ui/modal";
+import { ColorPicker, PRESET_COLORS } from "@/app/components/ui/color-picker";
 import { SubmitButton } from "@/app/components/ui/buttons";
 import { createListAction, updateListAction } from "./actions";
 import type { ListWithCards } from "./types";
@@ -9,9 +10,6 @@ import type { ListWithCards } from "./types";
 const fieldClass =
   "border-line bg-panel-2 text-text placeholder:text-muted focus:border-accent w-full rounded-lg border px-3 py-2 text-sm focus:outline-none";
 const labelClass = "text-muted mb-1.5 block text-xs font-medium";
-
-/** สีตั้งต้นให้เลือกเร็ว ๆ — ค่าจริงเก็บลง DB จึงใส่ผ่าน style ไม่ใช่ token */
-const PRESET_COLORS = ["#8b7cff", "#4dabff", "#2fd4a0", "#b6f36b", "#ffcc4d", "#ff8f6b", "#ff6b6b"];
 
 /**
  * หน้าต่างสร้าง/แก้ไขคอลัมน์ — ใช้ตัวเดียวกันทั้งสองโหมด
@@ -64,31 +62,7 @@ export function ListDialog({
 
         <div>
           <span className={labelClass}>สี</span>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <input
-              type="color"
-              name="color"
-              value={color}
-              onChange={(event) => setColor(event.target.value)}
-              aria-label="เลือกสีเอง"
-              className="border-line bg-panel-2 h-8 w-10 shrink-0 cursor-pointer rounded-lg border"
-            />
-            {PRESET_COLORS.map((preset) => (
-              <button
-                key={preset}
-                type="button"
-                onClick={() => setColor(preset)}
-                aria-label={`ใช้สี ${preset}`}
-                aria-pressed={color.toLowerCase() === preset.toLowerCase()}
-                style={{ backgroundColor: preset }}
-                className={`h-6 w-6 rounded-full transition ${
-                  color.toLowerCase() === preset.toLowerCase()
-                    ? "ring-text scale-110 ring-2 ring-offset-2 ring-offset-[var(--panel)]"
-                    : "opacity-70 hover:opacity-100"
-                }`}
-              />
-            ))}
-          </div>
+          <ColorPicker name="color" value={color} onChange={setColor} />
         </div>
 
         <div>

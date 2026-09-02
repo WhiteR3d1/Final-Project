@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { updateBoardAction } from "@/app/actions/board";
 import type { BoardInvite, Label, Priority } from "@/app/generated/prisma/client";
 import { BoardRole } from "@/app/generated/prisma/enums";
 import { Modal } from "@/app/components/ui/modal";
 import { ConfirmSubmitButton, SubmitButton } from "@/app/components/ui/buttons";
+import { ColorPicker, PRESET_COLORS } from "@/app/components/ui/color-picker";
 import { IconPlus, IconSettings, IconTrash } from "@/app/components/ui/icons";
 import { createInviteAction, createLabelAction, deleteLabelAction } from "./actions";
 import { PriorityManager } from "./priority-manager";
@@ -15,6 +17,9 @@ const inputClass =
 /** ตั้งค่าบอร์ดทั้งหมดรวมไว้ที่เดียว — เดิมฟอร์มพวกนี้กองอยู่บนหัวหน้าบอร์ด */
 export function BoardSettingsDialog({
   boardId,
+  boardName,
+  boardColor,
+  boardDescription,
   labels,
   priorities,
   invites,
@@ -22,6 +27,9 @@ export function BoardSettingsDialog({
   canInvite,
 }: {
   boardId: string;
+  boardName: string;
+  boardColor: string | null;
+  boardDescription: string | null;
   labels: Label[];
   priorities: Priority[];
   invites: BoardInvite[];
@@ -29,6 +37,7 @@ export function BoardSettingsDialog({
   canInvite: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [color, setColor] = useState(boardColor ?? PRESET_COLORS[0]);
 
   return (
     <>
@@ -42,6 +51,41 @@ export function BoardSettingsDialog({
 
       <Modal open={open} onClose={() => setOpen(false)} title="ตั้งค่าบอร์ด">
         <div className="flex flex-col gap-6">
+          {/* เปลี่ยนตัวตนของบอร์ดเป็นสิทธิ์ระดับเจ้าของ เท่ากับการเชิญสมาชิก */}
+          {canInvite && (
+            <section>
+              <h3 className="text-text mb-2 text-sm font-medium">ข้อมูลบอร์ด</h3>
+              <form action={updateBoardAction} className="flex flex-col gap-2.5">
+                <input type="hidden" name="boardId" value={boardId} />
+                <input
+                  type="text"
+                  name="name"
+                  defaultValue={boardName}
+                  required
+                  maxLength={80}
+                  aria-label="ชื่อบอร์ด"
+                  className={`${inputClass} w-full font-medium`}
+                />
+                <ColorPicker name="color" value={color} onChange={setColor} />
+                <textarea
+                  name="description"
+                  defaultValue={boardDescription ?? ""}
+                  placeholder="บอร์ดนี้ใช้ทำอะไร..."
+                  rows={2}
+                  maxLength={300}
+                  aria-label="คำอธิบายบอร์ด"
+                  className={`${inputClass} w-full resize-y`}
+                />
+                <SubmitButton
+                  pendingLabel="กำลังบันทึก..."
+                  className="bg-accent text-accent-ink self-end rounded-lg px-3 py-1.5 text-xs font-medium hover:brightness-110"
+                >
+                  บันทึกข้อมูลบอร์ด
+                </SubmitButton>
+              </form>
+            </section>
+          )}
+
           <section>
             <h3 className="text-text mb-2 text-sm font-medium">ป้ายกำกับ</h3>
             <div className="mb-2.5 flex flex-wrap gap-1.5">

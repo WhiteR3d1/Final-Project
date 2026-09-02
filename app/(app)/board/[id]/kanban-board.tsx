@@ -23,6 +23,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import type { Label, Priority, User } from "@/app/generated/prisma/client";
 import { dueBucket } from "@/lib/due";
+import { positionBetween, resolveListDropTarget } from "@/lib/drag";
 import { Toast } from "@/app/components/ui/toast";
 import { IconGrip, IconPlus } from "@/app/components/ui/icons";
 import { reorderListAction, reorderCardAction } from "./actions";
@@ -159,19 +160,20 @@ export function KanbanBoard({
     if (activeId === overId) return;
 
     if (wasDraggingList) {
+      // closestCorners มักเลือกการ์ดในคอลัมน์ปลายทางเป็น over ไม่ใช่ตัวคอลัมน์
+      // ถ้าเทียบ id ตรง ๆ จะหาไม่เจอแล้วเงียบ คอลัมน์เลยเด้งกลับที่เดิม
+      const overListId = resolveListDropTarget(lists, activeId, overId);
+      if (!overListId) return;
+
       const oldIndex = lists.findIndex((list) => list.id === activeId);
-      const newIndex = lists.findIndex((list) => list.id === overId);
+      const newIndex = lists.findIndex((list) => list.id === overListId);
       if (oldIndex === -1 || newIndex === -1) return;
 
       const reordered = arrayMove(lists, oldIndex, newIndex);
-      const prevList = reordered[newIndex - 1];
-      const nextList = reordered[newIndex + 1];
-
-      let newPosition: number;
-      if (prevList && nextList) newPosition = (prevList.position + nextList.position) / 2;
-      else if (nextList) newPosition = nextList.position - 1;
-      else if (prevList) newPosition = prevList.position + 1;
-      else newPosition = 1;
+      const newPosition = positionBetween(
+        reordered[newIndex - 1]?.position,
+        reordered[newIndex + 1]?.position
+      );
 
       setLists(
         reordered.map((list) => (list.id === activeId ? { ...list, position: newPosition } : list))
@@ -203,12 +205,7 @@ export function KanbanBoard({
 
     const before = destIndex > 0 ? destCardsWithoutDragged[destIndex - 1] : undefined;
     const after = destCardsWithoutDragged[destIndex];
-
-    let newPosition: number;
-    if (before && after) newPosition = (before.position + after.position) / 2;
-    else if (after) newPosition = after.position - 1;
-    else if (before) newPosition = before.position + 1;
-    else newPosition = 1;
+    const newPosition = positionBetween(before?.position, after?.position);
 
     setLists((prev) =>
       prev.map((list) => {

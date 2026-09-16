@@ -406,7 +406,8 @@ export async function setCardPriorityAction(formData: FormData) {
   const access = await assertBoardAccess(boardId, user.id);
   if (!access?.canEdit) return;
 
-  const nextPriorityId = card.priorityId === priorityId ? null : priorityId;
+  // เมนูมีแถว "ไม่กำหนด" อยู่แล้ว (ส่งค่าว่างมา) กดแถวที่เลือกอยู่จึงควรคงค่าเดิม ไม่ใช่ toggle
+  const nextPriorityId = priorityId || null;
 
   await prisma.card.update({
     where: { id: cardId },

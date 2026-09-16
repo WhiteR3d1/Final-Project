@@ -80,6 +80,7 @@ app/
       board-settings-dialog.tsx # client — modal ตั้งค่าบอร์ด (ข้อมูลบอร์ด / label / priority / เชิญสมาชิก)
       share-link-box.tsx      # client — ลิงก์แชร์ "ใครมีลิงก์ก็เข้าได้" (อยู่ใน modal ตั้งค่า เห็นเฉพาะเจ้าของ)
       card-attachments.tsx    # client — ไฟล์แนบของการ์ด (อยู่ใน modal รายละเอียดการ์ด)
+      card-field-selects.tsx  # client — dropdown ของ priority / ป้ายกำกับ / ผู้รับผิดชอบ (อยู่ใน modal การ์ด)
       board-filters.tsx       # client — แถบฟิลเตอร์ (กรองฝั่ง client ล้วน)
       list-menu.tsx           # client — เมนู ⋯ ของคอลัมน์
       card-move-buttons.tsx   # ปุ่มย้ายการ์ด (fallback ของการลาก อยู่ใน modal)
@@ -87,7 +88,7 @@ app/
 
   components/
     ui/                       # primitive ใช้ซ้ำ: panel, stat-tile, chip, avatar,
-                              # progress-ring, bar-chart, modal, buttons, toast, icons,
+                              # progress-ring, bar-chart, modal, select-menu, buttons, toast, icons,
                               # color-picker (จานสีกลาง ใช้ทั้งบอร์ดและคอลัมน์)
     app-shell/                # sidebar, topbar, nav-link, mobile-nav,
                               # create-board-dialog
@@ -295,6 +296,14 @@ prisma/
   — **ย้ายช่องกรอกแล้วอย่าลืม `form` attribute** ไม่งั้นค่าจะไม่ถูกส่งไปกับ action
 - ฟิลเตอร์กรองฝั่ง client จาก props ที่มีอยู่ (ไม่ยิง DB เพิ่ม) และ **ต้องปิดการลากระหว่างกรอง**
   เพราะตำแหน่งใหม่คำนวณจากการ์ดเพื่อนบ้าน ถ้าบางใบถูกซ่อนตำแหน่งจะเพี้ยน
+- สามช่องขวาของ modal การ์ด (ระดับความสำคัญ / ป้ายกำกับ / ผู้รับผิดชอบ) เป็น dropdown ที่
+  `card-field-selects.tsx` ทั้งหมด — กดปุ่มแล้วค่อยกางตัวเลือกทั้งหมดของบอร์ด
+  **อย่าเอาตัวเลือกกลับมาเรียงโชว์ค้างอีก** บอร์ดที่สมาชิกเยอะจะล้น และอวาตาร์ที่เห็นแค่
+  ตัวอักษรแรกจะซ้ำกันจนแยกคนไม่ออก (ในเมนูจึงต้องมีชื่อเต็ม + อีเมลกำกับ)
+  เปลือกของ dropdown อยู่ที่ `components/ui/select-menu.tsx` (เปิด/ปิด + คลิกนอกเมนู + ดัก Esc)
+  ตัวมันดัก Esc ไว้เองตอนเมนูเปิด (`preventDefault`) **ห้ามเอาออก** ไม่งั้น Esc จะปิด `<dialog>` ทั้งการ์ด
+  priority เลือกได้ค่าเดียว `setCardPriorityAction` จึงเป็น "ตั้งค่าตรง ๆ" ไม่ใช่ toggle อีกต่อไป
+  (ส่ง `priorityId` ว่าง = ล้างค่า) ส่วนป้าย/ผู้รับผิดชอบเลือกได้หลายค่า จึงยัง toggle เหมือนเดิม
 - คำสั่งของคอลัมน์ (เปลี่ยนชื่อ / ตั้งเป็นคอลัมน์เสร็จสิ้น / ลบ) อยู่ในเมนู ⋯ ที่ `list-menu.tsx`
 
 ---

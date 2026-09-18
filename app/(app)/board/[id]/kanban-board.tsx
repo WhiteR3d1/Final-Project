@@ -354,6 +354,8 @@ export function KanbanBoard({
           listId={addCardList.id}
           listName={addCardList.name}
           priorities={boardPriorities}
+          labels={boardLabels}
+          members={boardMembers}
           onClose={() => setAddCardListId(null)}
         />
       )}

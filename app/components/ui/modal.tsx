@@ -18,12 +18,14 @@ export function Modal({
   onClose,
   title,
   size = "md",
+  busy = false,
   children,
 }: {
   open: boolean;
   onClose: () => void;
   title: ReactNode;
   size?: keyof typeof SIZE_CLASS;
+  busy?: boolean;
   children: ReactNode;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -39,10 +41,11 @@ export function Modal({
   return (
     <dialog
       ref={dialogRef}
-      onClose={onClose}
+      onClose={() => { if (!busy) onClose(); }}
+      onCancel={(event) => { if (busy) event.preventDefault(); }}
       // คลิกนอกกล่อง (โดน backdrop ซึ่งนับเป็นตัว dialog เอง) = ปิด
       onClick={(event) => {
-        if (event.target === dialogRef.current) onClose();
+        if (!busy && event.target === dialogRef.current) onClose();
       }}
       className={`border-line bg-panel text-text m-auto w-[92vw] rounded-2xl border p-0 shadow-2xl backdrop:bg-black/60 ${SIZE_CLASS[size]}`}
     >
@@ -51,6 +54,7 @@ export function Modal({
         <button
           type="button"
           onClick={onClose}
+          disabled={busy}
           aria-label="ปิดหน้าต่าง"
           className="text-muted hover:bg-panel-2 hover:text-text rounded-lg p-1.5"
         >

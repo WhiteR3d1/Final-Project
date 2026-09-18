@@ -75,11 +75,13 @@ app/
       kanban-board.tsx        # client — drag & drop (@dnd-kit) + ฟิลเตอร์ + คุมว่าเปิดการ์ดไหน
       board-card.tsx          # client — การ์ดแบบกระชับบนคอลัมน์
       card-detail-dialog.tsx  # client — modal รายละเอียดการ์ด (แก้ทุกอย่างที่นี่)
-      card-create-dialog.tsx  # client — modal เพิ่มการ์ด (ชื่อ/รายละเอียด/กำหนดส่ง/priority)
+      card-create-dialog.tsx  # client — modal เพิ่มการ์ดพร้อมป้าย/ผู้รับผิดชอบ/เช็กลิสต์/ไฟล์/ความคิดเห็น
+      attachment-upload.tsx   # client — คิวอัปโหลดหลายไฟล์ + ภาพตัวอย่าง + ลองใหม่รายไฟล์
       list-dialog.tsx         # client — modal สร้าง+แก้ไขคอลัมน์ (ชื่อ/สี/คำอธิบาย)
       board-settings-dialog.tsx # client — modal ตั้งค่าบอร์ด (ข้อมูลบอร์ด / label / priority / เชิญสมาชิก)
       share-link-box.tsx      # client — ลิงก์แชร์ "ใครมีลิงก์ก็เข้าได้" (อยู่ใน modal ตั้งค่า เห็นเฉพาะเจ้าของ)
       card-attachments.tsx    # client — ไฟล์แนบของการ์ด (อยู่ใน modal รายละเอียดการ์ด)
+      card-field-selects.tsx  # client — dropdown ของ priority / ป้ายกำกับ / ผู้รับผิดชอบ (อยู่ใน modal การ์ด)
       board-filters.tsx       # client — แถบฟิลเตอร์ (กรองฝั่ง client ล้วน)
       list-menu.tsx           # client — เมนู ⋯ ของคอลัมน์
       card-move-buttons.tsx   # ปุ่มย้ายการ์ด (fallback ของการลาก อยู่ใน modal)
@@ -87,7 +89,7 @@ app/
 
   components/
     ui/                       # primitive ใช้ซ้ำ: panel, stat-tile, chip, avatar,
-                              # progress-ring, bar-chart, modal, buttons, toast, icons,
+                              # progress-ring, bar-chart, modal, select-menu, buttons, toast, icons,
                               # color-picker (จานสีกลาง ใช้ทั้งบอร์ดและคอลัมน์)
     app-shell/                # sidebar, topbar, nav-link, mobile-nav,
                               # create-board-dialog
@@ -181,7 +183,7 @@ prisma/
 - `AUTH_SECRET` — กุญแจเข้ารหัส session JWT (สร้างด้วย `npx auth secret`)
   เปลี่ยนค่านี้ = ผู้ใช้ทุกคนหลุด login
 - `BLOB_READ_WRITE_TOKEN` — โทเคนของ Vercel Blob สำหรับอัปโหลดไฟล์แนบ
-  ไม่ใส่ก็ยังแนบ "ลิงก์" ได้ตามปกติ มีแต่การอัปโหลดไฟล์ที่จะไม่ทำงาน (action คืนเงียบ ๆ)
+  ไม่ใส่ก็ยังแนบ "ลิงก์" ได้ตามปกติ การอัปโหลดไฟล์จะคืน error ให้แสดงในรายการไฟล์
 
 ---
 
@@ -295,6 +297,24 @@ prisma/
   — **ย้ายช่องกรอกแล้วอย่าลืม `form` attribute** ไม่งั้นค่าจะไม่ถูกส่งไปกับ action
 - ฟิลเตอร์กรองฝั่ง client จาก props ที่มีอยู่ (ไม่ยิง DB เพิ่ม) และ **ต้องปิดการลากระหว่างกรอง**
   เพราะตำแหน่งใหม่คำนวณจากการ์ดเพื่อนบ้าน ถ้าบางใบถูกซ่อนตำแหน่งจะเพี้ยน
+- สามช่องขวาของ modal การ์ด (ระดับความสำคัญ / ป้ายกำกับ / ผู้รับผิดชอบ) เป็น dropdown ที่
+  `card-field-selects.tsx` ทั้งหมด — กดปุ่มแล้วค่อยกางตัวเลือกทั้งหมดของบอร์ด
+  **อย่าเอาตัวเลือกกลับมาเรียงโชว์ค้างอีก** บอร์ดที่สมาชิกเยอะจะล้น และอวาตาร์ที่เห็นแค่
+  ตัวอักษรแรกจะซ้ำกันจนแยกคนไม่ออก (ในเมนูจึงต้องมีชื่อเต็ม + อีเมลกำกับ)
+  เปลือกของ dropdown อยู่ที่ `components/ui/select-menu.tsx` (เปิด/ปิด + คลิกนอกเมนู + ดัก Esc)
+  ตัวมันดัก Esc ไว้เองตอนเมนูเปิด (`preventDefault`) **ห้ามเอาออก** ไม่งั้น Esc จะปิด `<dialog>` ทั้งการ์ด
+  priority เลือกได้ค่าเดียว `setCardPriorityAction` จึงเป็น "ตั้งค่าตรง ๆ" ไม่ใช่ toggle อีกต่อไป
+  (ส่ง `priorityId` ว่าง = ล้างค่า) ส่วนป้าย/ผู้รับผิดชอบเลือกได้หลายค่า จึงยัง toggle เหมือนเดิม
+- หน้าสร้างการ์ดใช้ layout สองคอลัมน์และ dropdown ชุดเดียวกับหน้ารายละเอียด
+  โดยส่ง `onChange` ให้ dropdown เก็บค่าในฟอร์มก่อนมี `cardId` (ห้ามยิง action ก่อนสร้าง)
+  `lib/card-create.ts` ตรวจข้อมูล แล้ว `createCardAction` บันทึกการ์ดพร้อมความสัมพันธ์
+  เช็กลิสต์ ลิงก์ ความคิดเห็น และกิจกรรมใน transaction เดียว ตรวจสิทธิ์และขอบเขตบอร์ดบนเซิร์ฟเวอร์
+- การ์ดเดิมอัปโหลดทันทีที่เลือก รองรับหลายไฟล์ แต่ส่งทีละไฟล์เพราะ bodySizeLimit เป็นลิมิตต่อ request
+  ไม่ต้องมีปุ่มอัปโหลดแยก ส่วนการ์ดใหม่เก็บไฟล์ในหน่วยความจำและแสดง “รอสร้างการ์ด”
+  เมื่อกดเพิ่มการ์ดจึงอัปโหลดอัตโนมัติหลังได้ `cardId` ยกเลิกก่อนสร้างแล้วไม่มีข้อมูลค้าง
+  `attachment-upload.tsx` ใช้ ID รายไฟล์ (ไม่ใช้ชื่อ) พร้อมภาพตัวอย่างและ error รายไฟล์
+  เมื่ออัปโหลดบางใบล้มเหลวให้ลองใหม่โดยใช้ `cardId`/attachment ID เดิม ไม่สร้างการ์ดซ้ำ
+  modal สร้างการ์ดใช้ `busy` กัน Esc/ปิด/กดซ้ำระหว่างบันทึก และยังคงค่าฟอร์มเมื่อผิดพลาด
 - คำสั่งของคอลัมน์ (เปลี่ยนชื่อ / ตั้งเป็นคอลัมน์เสร็จสิ้น / ลบ) อยู่ในเมนู ⋯ ที่ `list-menu.tsx`
 
 ---

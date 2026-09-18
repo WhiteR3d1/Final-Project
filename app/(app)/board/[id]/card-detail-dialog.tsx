@@ -13,12 +13,14 @@ import {
   createChecklistAction,
   deleteCardAction,
   deleteChecklistItemAction,
-  setCardPriorityAction,
-  toggleCardAssigneeAction,
-  toggleCardLabelAction,
   toggleChecklistItemAction,
   updateCardAction,
 } from "./actions";
+import {
+  CardAssigneeSelect,
+  CardLabelSelect,
+  CardPrioritySelect,
+} from "./card-field-selects";
 import { CardAttachments } from "./card-attachments";
 import { CardMoveButtons } from "./card-move-buttons";
 import type { CardWithRelations } from "./types";
@@ -57,21 +59,6 @@ export function CardDetailDialog({
   // ปุ่ม "บันทึก" อยู่ที่ footer คู่กับปุ่มลบ แต่ <form> ซ้อนกันไม่ได้ (ปุ่มลบเป็นอีกฟอร์ม)
   // จึงผูกช่องกรอกเข้ากับฟอร์มที่อยู่คนละที่ในเอกสารด้วย attribute form="<id>" ของ HTML
   const editFormId = `card-edit-${card.id}`;
-
-  // viewer ไม่ได้เลือกอะไร จึงโชว์เฉพาะค่าที่การ์ดนี้ถูกตั้งไว้จริง ไม่ใช่ตัวเลือกทั้งบอร์ด
-  const visiblePriorities = canEdit
-    ? boardPriorities
-    : boardPriorities.filter((priority) => card.priorityId === priority.id);
-  const visibleLabels = canEdit
-    ? boardLabels
-    : boardLabels.filter((label) =>
-        card.labels.some((cardLabel) => cardLabel.labelId === label.id)
-      );
-  const visibleMembers = canEdit
-    ? boardMembers
-    : boardMembers.filter((member) =>
-        card.assignees.some((assignee) => assignee.userId === member.id)
-      );
 
   return (
     <Modal open onClose={onClose} size="lg" title="รายละเอียดการ์ด">
@@ -280,113 +267,32 @@ export function CardDetailDialog({
 
           <section>
             <h3 className={sectionTitleClass}>ระดับความสำคัญ</h3>
-            <div className="flex flex-wrap gap-1.5">
-              {visiblePriorities.length === 0 && (
-                <p className="text-muted text-xs">ยังไม่มี priority ในบอร์ดนี้</p>
-              )}
-              {visiblePriorities.map((priority) => {
-                const isActive = card.priorityId === priority.id;
-                // สีมาจากที่ผู้ใช้ตั้งเองใน DB จึงต้องใส่ผ่าน style
-                const chip = (
-                  <span
-                    style={
-                      isActive
-                        ? { backgroundColor: `${priority.color}22`, color: priority.color }
-                        : { borderColor: priority.color, color: priority.color }
-                    }
-                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                      isActive ? "" : "border border-dashed opacity-70"
-                    }`}
-                  >
-                    {priority.name}
-                  </span>
-                );
-
-                if (!canEdit) return <span key={priority.id}>{chip}</span>;
-
-                return (
-                  <form key={priority.id} action={setCardPriorityAction}>
-                    <input type="hidden" name="cardId" value={card.id} />
-                    <input type="hidden" name="priorityId" value={priority.id} />
-                    <SubmitButton
-                      title={isActive ? "เอาออก" : `ตั้งเป็น ${priority.name}`}
-                      className="rounded-full px-2 py-0.5 text-[11px] font-medium"
-                    >
-                      {chip}
-                    </SubmitButton>
-                  </form>
-                );
-              })}
-            </div>
+            <CardPrioritySelect
+              cardId={card.id}
+              priorities={boardPriorities}
+              selectedId={card.priorityId}
+              canEdit={canEdit}
+            />
           </section>
 
           <section>
             <h3 className={sectionTitleClass}>ป้ายกำกับ</h3>
-            <div className="flex flex-wrap gap-1.5">
-              {visibleLabels.length === 0 && (
-                <p className="text-muted text-xs">ยังไม่มีป้ายกำกับ</p>
-              )}
-              {visibleLabels.map((label) => {
-                const isAssigned = card.labels.some((cardLabel) => cardLabel.labelId === label.id);
-                const chip = (
-                  <span
-                    style={{
-                      backgroundColor: isAssigned ? label.color : "transparent",
-                      borderColor: label.color,
-                      color: isAssigned ? "#0b0c0e" : label.color,
-                    }}
-                    className="inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium"
-                  >
-                    {label.name}
-                  </span>
-                );
-
-                if (!canEdit) return <span key={label.id}>{chip}</span>;
-
-                return (
-                  <form key={label.id} action={toggleCardLabelAction}>
-                    <input type="hidden" name="cardId" value={card.id} />
-                    <input type="hidden" name="labelId" value={label.id} />
-                    <SubmitButton title={label.name} ariaLabel={`สลับป้าย ${label.name}`}>
-                      {chip}
-                    </SubmitButton>
-                  </form>
-                );
-              })}
-            </div>
+            <CardLabelSelect
+              cardId={card.id}
+              labels={boardLabels}
+              selectedIds={card.labels.map((cardLabel) => cardLabel.labelId)}
+              canEdit={canEdit}
+            />
           </section>
 
           <section>
             <h3 className={sectionTitleClass}>ผู้รับผิดชอบ</h3>
-            <div className="flex flex-wrap gap-1.5">
-              {visibleMembers.map((member) => {
-                const isAssigned = card.assignees.some(
-                  (assignee) => assignee.userId === member.id
-                );
-
-                if (!canEdit) {
-                  return (
-                    <span key={member.id} title={displayName(member)}>
-                      <Avatar user={member} size={26} />
-                    </span>
-                  );
-                }
-
-                return (
-                  <form key={member.id} action={toggleCardAssigneeAction}>
-                    <input type="hidden" name="cardId" value={card.id} />
-                    <input type="hidden" name="userId" value={member.id} />
-                    <SubmitButton
-                      title={displayName(member)}
-                      ariaLabel={`สลับผู้รับผิดชอบ ${displayName(member)}`}
-                      className="block"
-                    >
-                      <Avatar user={member} size={26} muted={!isAssigned} />
-                    </SubmitButton>
-                  </form>
-                );
-              })}
-            </div>
+            <CardAssigneeSelect
+              cardId={card.id}
+              members={boardMembers}
+              selectedIds={card.assignees.map((assignee) => assignee.userId)}
+              canEdit={canEdit}
+            />
           </section>
 
         </aside>

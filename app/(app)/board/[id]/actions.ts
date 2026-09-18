@@ -1,5 +1,7 @@
 "use server";
 
+import { parseCardCreate } from "@/lib/card-create";
+import { z } from "zod";
 import { randomUUID } from "crypto";
 import { del, put } from "@vercel/blob";
 import { revalidatePath } from "next/cache";
@@ -9,6 +11,8 @@ import { assertBoardAccess } from "@/lib/board-access";
 import { ActivityType, BoardRole, InviteStatus } from "@/app/generated/prisma/enums";
 import { awardCardCompletion } from "@/lib/gamification";
 import {
+  MAX_ATTACHMENT_BYTES,
+  formatFileSize,
   attachmentKindForUpload,
   attachmentNameFromUrl,
   isWithinAttachmentSizeLimit,
@@ -178,63 +182,58 @@ export async function reorderListAction(listId: string, newPosition: number) {
   revalidatePath(`/board/${list.boardId}`);
 }
 
-export async function createCardAction(formData: FormData) {
-  const listId = formData.get("listId");
-  const title = formData.get("title");
+export async function createCardAction(formData: FormData): Promise<
+  { ok: true; cardId: string } | { ok: false; error: string }
+> {
+  const parsed = parseCardCreate(formData);
+  if (!parsed.success) return { ok: false, error: "ตรวจสอบชื่อการ์ด วันที่ เช็กลิสต์ และลิงก์ให้ถูกต้อง" };
+  const input = parsed.data;
+  const user = await getCurrentUser();
+  const list = await prisma.list.findUnique({ where: { id: input.listId }, select: { boardId: true } });
+  if (!list) return { ok: false, error: "ไม่พบคอลัมน์นี้" };
+  const access = await assertBoardAccess(list.boardId, user.id);
+  if (!access?.canEdit) return { ok: false, error: "ไม่มีสิทธิ์เพิ่มการ์ดในบอร์ดนี้" };
 
-  if (typeof listId !== "string" || typeof title !== "string" || !title.trim()) {
-    return;
+  // ใช้ ID เดิมเมื่อ retry หลังคำตอบขาดหาย ป้องกันสร้างการ์ดซ้ำ
+  const existing = await prisma.card.findUnique({ where: { id: input.requestId } });
+  if (existing) {
+    if (existing.createdById !== user.id || existing.listId !== input.listId)
+      return { ok: false, error: "คำขอสร้างการ์ดไม่ถูกต้อง" };
+    revalidatePath(`/board/${list.boardId}`);
+    return { ok: true, cardId: existing.id };
   }
 
-  const user = await getCurrentUser();
-
-  const list = await prisma.list.findUniqueOrThrow({
-    where: { id: listId },
-    select: { boardId: true },
-  });
-
-  const access = await assertBoardAccess(list.boardId, user.id);
-  if (!access?.canEdit) return;
-
-  // priority ที่ส่งมาต้องเป็นของบอร์ดนี้เท่านั้น ไม่งั้นผูก priority ข้ามบอร์ดได้
-  const priorityId = optionalText(formData.get("priorityId"));
-  const validPriorityId = priorityId
-    ? (await prisma.priority.findFirst({
-        where: { id: priorityId, boardId: list.boardId },
-        select: { id: true },
-      }))?.id ?? null
-    : null;
-
-  const dueDate = optionalText(formData.get("dueDate"));
-
-  const lastCard = await prisma.card.findFirst({
-    where: { listId },
-    orderBy: { position: "desc" },
-  });
-
-  const card = await prisma.card.create({
-    data: {
-      listId,
-      title: title.trim(),
-      description: optionalText(formData.get("description")),
-      dueDate: dueDate ? new Date(dueDate) : null,
-      priorityId: validPriorityId,
-      position: (lastCard?.position ?? 0) + 1,
-      createdById: user.id,
-    },
-  });
-
-  await prisma.activity.create({
-    data: {
-      boardId: list.boardId,
-      cardId: card.id,
-      userId: user.id,
-      type: ActivityType.CARD_CREATED,
-      message: `${user.name ?? user.email} created card "${card.title}"`,
-    },
-  });
-
-  revalidatePath(`/board/${list.boardId}`);
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const priority = input.priorityId ? await tx.priority.findFirst({ where: { id: input.priorityId, boardId: list.boardId } }) : null;
+      const labels = await tx.label.findMany({ where: { id: { in: input.labelIds }, boardId: list.boardId } });
+      const members = await tx.boardMember.findMany({ where: { boardId: list.boardId, userId: { in: input.assigneeIds } }, select: { userId: true } });
+      const memberIds = new Set([access.ownerId, ...members.map((member) => member.userId)]);
+      if ((input.priorityId && !priority) || labels.length !== input.labelIds.length || input.assigneeIds.some((id) => !memberIds.has(id)))
+        return { ok: false as const, error: "ระดับความสำคัญ ป้าย หรือผู้รับผิดชอบไม่อยู่ในบอร์ดนี้" };
+      const last = await tx.card.findFirst({ where: { listId: input.listId }, orderBy: { position: "desc" } });
+      const card = await tx.card.create({ data: {
+        id: input.requestId, listId: input.listId, title: input.title,
+        description: input.description || null, dueDate: input.dueDate ? new Date(input.dueDate) : null,
+        priorityId: input.priorityId || null, position: (last?.position ?? 0) + 1, createdById: user.id,
+        labels: { create: input.labelIds.map((labelId) => ({ labelId })) },
+        assignees: { create: input.assigneeIds.map((userId) => ({ userId })) },
+        checklists: { create: input.checklists.map((checklist, position) => ({
+          title: checklist.title, position,
+          items: { create: checklist.items.map((item, position) => ({ ...item, position })) },
+        })) },
+        attachments: { create: input.links.map((url) => ({ type: "LINK", name: attachmentNameFromUrl(url), url, uploadedById: user.id })) },
+        comments: { create: input.comment ? [{ content: input.comment, userId: user.id }] : [] },
+        activities: { create: { boardId: list.boardId, userId: user.id, type: ActivityType.CARD_CREATED,
+          message: `${user.name ?? user.email} created card "${input.title}"` } },
+      } });
+      return { ok: true as const, cardId: card.id };
+    });
+    revalidatePath(`/board/${list.boardId}`);
+    return result;
+  } catch {
+    return { ok: false, error: "บันทึกไม่สำเร็จ กรุณาลองอีกครั้ง ข้อมูลที่กรอกยังอยู่" };
+  }
 }
 
 export async function moveCardAction(cardId: string, direction: "left" | "right") {
@@ -406,7 +405,8 @@ export async function setCardPriorityAction(formData: FormData) {
   const access = await assertBoardAccess(boardId, user.id);
   if (!access?.canEdit) return;
 
-  const nextPriorityId = card.priorityId === priorityId ? null : priorityId;
+  // เมนูมีแถว "ไม่กำหนด" อยู่แล้ว (ส่งค่าว่างมา) กดแถวที่เลือกอยู่จึงควรคงค่าเดิม ไม่ใช่ toggle
+  const nextPriorityId = priorityId || null;
 
   await prisma.card.update({
     where: { id: cardId },
@@ -867,37 +867,50 @@ export async function addLinkAttachmentAction(formData: FormData) {
  * อัปโหลดไฟล์ขึ้น Vercel Blob — ต้องมี BLOB_READ_WRITE_TOKEN ถึงจะทำงาน
  * เพดานขนาดเช็คซ้ำที่นี่ด้วย เพราะด่านฝั่ง client ถูกข้ามได้เสมอ
  */
-export async function uploadAttachmentAction(formData: FormData) {
+export async function uploadAttachmentAction(formData: FormData): Promise<
+  { ok: true } | { ok: false; error: string }
+> {
   const cardId = formData.get("cardId");
   const file = formData.get("file");
-  if (typeof cardId !== "string" || !(file instanceof File)) return;
-  if (!isWithinAttachmentSizeLimit(file.size)) return;
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return;
-
+  const attachmentId = formData.get("attachmentId");
+  if (typeof cardId !== "string" || !(file instanceof File) || !z.uuid().safeParse(attachmentId).success)
+    return { ok: false, error: "ไฟล์ไม่ถูกต้อง" };
+  if (!isWithinAttachmentSizeLimit(file.size))
+    return { ok: false, error: `ไฟล์ต้องมีข้อมูลและมีขนาดไม่เกิน ${formatFileSize(MAX_ATTACHMENT_BYTES)}` };
   const user = await getCurrentUser();
-  const context = await cardEditAccess(cardId, user.id);
-  if (!context) return;
-
-  // addRandomSuffix กันไฟล์ชื่อซ้ำทับกันเอง
-  const blob = await put(`cards/${cardId}/${file.name}`, file, {
-    access: "public",
-    addRandomSuffix: true,
-  });
-
-  await prisma.attachment.create({
-    data: {
-      cardId,
-      type: attachmentKindForUpload(file.name, file.type),
-      name: file.name,
-      url: blob.url,
-      size: file.size,
-      mimeType: file.type || null,
-      blobPathname: blob.pathname,
-      uploadedById: user.id,
-    },
-  });
-
-  revalidatePath(`/board/${context.boardId}`);
+  let blob: Awaited<ReturnType<typeof put>> | undefined;
+  let saved = false;
+  try {
+    const context = await cardEditAccess(cardId, user.id);
+    if (!context) return { ok: false, error: "ไม่มีสิทธิ์แก้ไขการ์ดนี้" };
+    const existing = await prisma.attachment.findUnique({ where: { id: attachmentId as string } });
+    if (existing) {
+      if (existing.cardId !== cardId || existing.uploadedById !== user.id)
+        return { ok: false, error: "คำขอแนบไฟล์ไม่ถูกต้อง" };
+      revalidatePath(`/board/${context.boardId}`);
+      return { ok: true };
+    }
+    if (!process.env.BLOB_READ_WRITE_TOKEN)
+      return { ok: false, error: "ระบบยังไม่ได้ตั้งค่าที่เก็บไฟล์" };
+    blob = await put(`cards/${cardId}/${file.name}`, file, { access: "public", addRandomSuffix: true });
+    await prisma.attachment.create({ data: {
+      id: attachmentId as string, cardId, type: attachmentKindForUpload(file.name, file.type),
+      name: file.name, url: blob.url, size: file.size, mimeType: file.type || null,
+      blobPathname: blob.pathname, uploadedById: user.id,
+    } });
+    saved = true;
+    revalidatePath(`/board/${context.boardId}`);
+    return { ok: true };
+  } catch {
+    if (blob && !saved) {
+      // A database timeout can arrive after commit. Never remove a blob that a saved row references.
+      try {
+        const stored = await prisma.attachment.findUnique({ where: { id: attachmentId as string } });
+        if (stored?.blobPathname !== blob.pathname) await del(blob.pathname);
+      } catch { console.error("Could not verify or clean up failed attachment upload"); }
+    }
+    return { ok: false, error: "อัปโหลดไม่สำเร็จ กรุณาลองอีกครั้ง" };
+  }
 }
 
 /** ลบไฟล์ออกจาก Blob ก่อนลบแถว ไม่งั้นไฟล์จะค้างกินโควตาโดยไม่มีใครรู้ */

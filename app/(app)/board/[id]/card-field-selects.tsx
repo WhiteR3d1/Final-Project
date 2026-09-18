@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import type { Label, Priority, User } from "@/app/generated/prisma/client";
 import { Avatar, AvatarStack, displayName } from "@/app/components/ui/avatar";
 import { SubmitButton } from "@/app/components/ui/buttons";
@@ -59,6 +60,20 @@ function Selected() {
   return <IconCheck size={14} className="text-accent ml-auto shrink-0" />;
 }
 
+function FieldOption({ cardId, field, value, action, onChange, close, children, label, className }: {
+  cardId?: string; field: string; value: string;
+  action: (data: FormData) => Promise<void>; onChange?: (value: string) => void;
+  close?: () => void; children: ReactNode; label: string; className: string;
+}) {
+  if (onChange) return <button type="button" aria-label={label} className={className}
+    onClick={() => { onChange(value); close?.(); }}>{children}</button>;
+  return <form action={action} onSubmit={close}>
+    <input type="hidden" name="cardId" value={cardId} />
+    <input type="hidden" name={field} value={value} />
+    <SubmitButton ariaLabel={label} className={className}>{children}</SubmitButton>
+  </form>;
+}
+
 /* ------------------------------ ระดับความสำคัญ ------------------------------ */
 
 export function CardPrioritySelect({
@@ -66,11 +81,13 @@ export function CardPrioritySelect({
   priorities,
   selectedId,
   canEdit,
+  onChange,
 }: {
-  cardId: string;
+  cardId?: string;
   priorities: Priority[];
   selectedId: string | null;
   canEdit: boolean;
+  onChange?: (value: string) => void;
 }) {
   const selected = priorities.find((priority) => priority.id === selectedId) ?? null;
 
@@ -88,31 +105,21 @@ export function CardPrioritySelect({
           {priorities.length === 0 && <MenuEmpty>บอร์ดนี้ยังไม่มีระดับความสำคัญ</MenuEmpty>}
 
           {/* เลือกได้ค่าเดียว จึงต้องมีแถวล้างค่า — ส่ง priorityId ว่างไปให้ action เคลียร์ */}
-          <form action={setCardPriorityAction} onSubmit={close}>
-            <input type="hidden" name="cardId" value={cardId} />
-            <input type="hidden" name="priorityId" value="" />
-            <SubmitButton
-              ariaLabel="ไม่กำหนดระดับความสำคัญ"
+          <FieldOption cardId={cardId} field="priorityId" value="" action={setCardPriorityAction} onChange={onChange} close={close} label="ไม่กำหนดระดับความสำคัญ"
               className={`${menuItemClass} ${selected ? "text-muted" : "text-text"}`}
             >
               <span className="truncate">ไม่กำหนด</span>
               {!selected && <Selected />}
-            </SubmitButton>
-          </form>
+            </FieldOption>
 
           {priorities.map((priority) => (
-            <form key={priority.id} action={setCardPriorityAction} onSubmit={close}>
-              <input type="hidden" name="cardId" value={cardId} />
-              <input type="hidden" name="priorityId" value={priority.id} />
-              <SubmitButton
-                ariaLabel={`ตั้งระดับความสำคัญเป็น ${priority.name}`}
+            <FieldOption key={priority.id} cardId={cardId} field="priorityId" value={priority.id} action={setCardPriorityAction} onChange={onChange} close={close} label={`ตั้งระดับความสำคัญเป็น ${priority.name}`}
                 className={`${menuItemClass} text-text`}
               >
                 <Dot color={priority.color} />
                 <span className="truncate">{priority.name}</span>
                 {priority.id === selectedId && <Selected />}
-              </SubmitButton>
-            </form>
+              </FieldOption>
           ))}
         </>
       )}
@@ -127,11 +134,13 @@ export function CardLabelSelect({
   labels,
   selectedIds,
   canEdit,
+  onChange,
 }: {
-  cardId: string;
+  cardId?: string;
   labels: Label[];
   selectedIds: string[];
   canEdit: boolean;
+  onChange?: (value: string) => void;
 }) {
   const selected = labels.filter((label) => selectedIds.includes(label.id));
 
@@ -167,18 +176,13 @@ export function CardLabelSelect({
             const isSelected = selectedIds.includes(label.id);
 
             return (
-              <form key={label.id} action={toggleCardLabelAction}>
-                <input type="hidden" name="cardId" value={cardId} />
-                <input type="hidden" name="labelId" value={label.id} />
-                <SubmitButton
-                  ariaLabel={`สลับป้าย ${label.name}`}
+              <FieldOption key={label.id} cardId={cardId} field="labelId" value={label.id} action={toggleCardLabelAction} onChange={onChange} label={`สลับป้าย ${label.name}`}
                   className={`${menuItemClass} ${isSelected ? "text-text" : "text-muted"}`}
                 >
                   <Dot color={label.color} />
                   <span className="truncate">{label.name}</span>
                   {isSelected && <Selected />}
-                </SubmitButton>
-              </form>
+                </FieldOption>
             );
           })}
         </>
@@ -194,11 +198,13 @@ export function CardAssigneeSelect({
   members,
   selectedIds,
   canEdit,
+  onChange,
 }: {
-  cardId: string;
+  cardId?: string;
   members: User[];
   selectedIds: string[];
   canEdit: boolean;
+  onChange?: (value: string) => void;
 }) {
   const selected = members.filter((member) => selectedIds.includes(member.id));
 
@@ -241,11 +247,7 @@ export function CardAssigneeSelect({
             const isSelected = selectedIds.includes(member.id);
 
             return (
-              <form key={member.id} action={toggleCardAssigneeAction}>
-                <input type="hidden" name="cardId" value={cardId} />
-                <input type="hidden" name="userId" value={member.id} />
-                <SubmitButton
-                  ariaLabel={`สลับผู้รับผิดชอบ ${displayName(member)}`}
+              <FieldOption key={member.id} cardId={cardId} field="userId" value={member.id} action={toggleCardAssigneeAction} onChange={onChange} label={`สลับผู้รับผิดชอบ ${displayName(member)}`}
                   className={`${menuItemClass} ${isSelected ? "text-text" : "text-muted"}`}
                 >
                   <Avatar user={member} size={22} muted={!isSelected} />
@@ -257,8 +259,7 @@ export function CardAssigneeSelect({
                     )}
                   </span>
                   {isSelected && <Selected />}
-                </SubmitButton>
-              </form>
+                </FieldOption>
             );
           })}
         </>

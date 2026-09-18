@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { IconChevronDown } from "./icons";
 
 /** สไตล์ของแถวในเมนู — ใช้ร่วมกันทุกช่องเลือกจะได้หน้าตาเหมือนกันหมด */
@@ -22,6 +22,18 @@ export function SelectMenu({
   children: (close: () => void) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const wasOpen = useRef(false);
+  const menuId = useId();
+
+  useEffect(() => {
+    if (wasOpen.current && !open) triggerRef.current?.focus();
+    wasOpen.current = open;
+  }, [open]);
+
+  function close() {
+    setOpen(false);
+  }
 
   return (
     <div
@@ -31,14 +43,15 @@ export function SelectMenu({
         if (!open || event.key !== "Escape") return;
         event.preventDefault();
         event.stopPropagation();
-        setOpen(false);
+        close();
       }}
     >
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((value) => !value)}
-        aria-haspopup="listbox"
         aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
         aria-label={menuLabel}
         className="border-line bg-panel-2 hover:border-accent flex w-full items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-left text-xs"
       >
@@ -48,13 +61,14 @@ export function SelectMenu({
 
       {open && (
         <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden="true" />
+          <div className="fixed inset-0 z-10" onClick={close} aria-hidden="true" />
           <div
-            role="listbox"
+            id={menuId}
+            role="group"
             aria-label={menuLabel}
             className="border-line bg-panel absolute top-full left-0 z-20 mt-1 max-h-60 w-full overflow-y-auto rounded-xl border p-1 shadow-xl"
           >
-            {children(() => setOpen(false))}
+            {children(close)}
           </div>
         </>
       )}

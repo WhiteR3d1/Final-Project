@@ -1,14 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useTransition } from "react";
 import type { Attachment } from "@/app/generated/prisma/client";
 import { ConfirmSubmitButton, SubmitButton } from "@/app/components/ui/buttons";
-import { IconFile, IconImage, IconLink, IconTrash } from "@/app/components/ui/icons";
-import { MAX_ATTACHMENT_BYTES, formatFileSize } from "@/lib/attachments";
+import { IconFile, IconLink, IconTrash } from "@/app/components/ui/icons";
+import { formatFileSize } from "@/lib/attachments";
+import { AttachmentUpload, useAttachmentUpload } from "./attachment-upload";
 import {
   addLinkAttachmentAction,
   deleteAttachmentAction,
-  uploadAttachmentAction,
 } from "./actions";
 
 const fieldClass =
@@ -26,23 +26,11 @@ export function CardAttachments({
   attachments: Attachment[];
   canEdit: boolean;
 }) {
-  const [sizeError, setSizeError] = useState<string | null>(null);
+  const queue = useAttachmentUpload();
+  const [pending, startTransition] = useTransition();
 
   const images = attachments.filter((attachment) => attachment.type === "IMAGE");
   const others = attachments.filter((attachment) => attachment.type !== "IMAGE");
-
-  // ด่านแรกให้ผู้ใช้รู้ตัวทันทีตั้งแต่ยังไม่ส่ง — ด่านจริงอยู่ใน uploadAttachmentAction
-  function checkSize(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.currentTarget.files?.[0];
-    if (file && file.size > MAX_ATTACHMENT_BYTES) {
-      setSizeError(
-        `ไฟล์ใหญ่เกินไป (${formatFileSize(file.size)}) — จำกัดที่ ${formatFileSize(MAX_ATTACHMENT_BYTES)}`
-      );
-      event.currentTarget.value = "";
-      return;
-    }
-    setSizeError(null);
-  }
 
   return (
     <section>
@@ -145,24 +133,9 @@ export function CardAttachments({
             </SubmitButton>
           </form>
 
-          <form action={uploadAttachmentAction} className="flex items-center gap-1.5">
-            <input type="hidden" name="cardId" value={cardId} />
-            <input
-              type="file"
-              name="file"
-              required
-              onChange={checkSize}
-              aria-label="เลือกไฟล์ที่จะแนบ"
-              className="text-muted file:border-line file:bg-panel-2 file:text-text min-w-0 flex-1 text-xs file:mr-2 file:rounded-lg file:border file:px-2 file:py-1 file:text-xs"
-            />
-            <SubmitButton pendingLabel="กำลังอัปโหลด..." className={ghostButtonClass}>
-              <span className="flex items-center gap-1.5">
-                <IconImage size={13} /> อัปโหลด
-              </span>
-            </SubmitButton>
-          </form>
-
-          {sizeError && <p className="text-danger text-[11px]">{sizeError}</p>}
+          <AttachmentUpload queue={queue} busy={pending}
+            onSelect={(files) => { const batch = queue.select(files); startTransition(async () => { await queue.upload(cardId, batch); }); }}
+            onRetry={() => startTransition(async () => { await queue.upload(cardId); })} />
         </div>
       )}
     </section>

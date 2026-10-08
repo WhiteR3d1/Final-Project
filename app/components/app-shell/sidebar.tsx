@@ -1,8 +1,10 @@
 import { getCurrentUser } from "@/lib/dal";
+import { prisma } from "@/lib/prisma";
 import { boardColor, getUserBoards } from "@/lib/boards";
+import { isTeacherEmail } from "@/lib/teacher";
 import { logout } from "@/app/actions/auth";
 import { Avatar, displayName } from "@/app/components/ui/avatar";
-import { IconCalendar, IconHome, IconLogout } from "@/app/components/ui/icons";
+import { IconCalendar, IconHome, IconLogout, IconReview } from "@/app/components/ui/icons";
 import { SubmitButton } from "@/app/components/ui/buttons";
 import { CreateBoardDialog } from "./create-board-dialog";
 import { BoardNavLink, NavLink } from "./nav-link";
@@ -14,6 +16,10 @@ import { BoardNavLink, NavLink } from "./nav-link";
 export async function Sidebar({ variant = "fixed" }: { variant?: "fixed" | "drawer" }) {
   const user = await getCurrentUser();
   const { owned, shared } = await getUserBoards(user.id);
+  const isTeacher = isTeacherEmail(user.email);
+  const pendingReviews = isTeacher
+    ? await prisma.card.count({ where: { list: { isReviewList: true } } })
+    : 0;
 
   return (
     <aside
@@ -38,6 +44,11 @@ export async function Sidebar({ variant = "fixed" }: { variant?: "fixed" | "draw
         <NavLink href="/calendar" icon={<IconCalendar size={18} />}>
           ปฏิทินงาน
         </NavLink>
+        {isTeacher && (
+          <NavLink href="/review" icon={<IconReview size={18} />}>
+            ตรวจงาน{pendingReviews > 0 && ` (${pendingReviews})`}
+          </NavLink>
+        )}
       </nav>
 
       <div className="flex min-h-0 flex-1 flex-col gap-1">

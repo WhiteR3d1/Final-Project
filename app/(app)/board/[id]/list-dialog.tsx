@@ -14,14 +14,17 @@ const labelClass = "text-muted mb-1.5 block text-xs font-medium";
 /**
  * หน้าต่างสร้าง/แก้ไขคอลัมน์ — ใช้ตัวเดียวกันทั้งสองโหมด
  * ส่ง `list` มา = โหมดแก้ไข, ไม่ส่ง = โหมดสร้างใหม่
+ * ส่ง `anchor` มากับโหมดสร้าง = แทรกข้างคอลัมน์นั้น (ตำแหน่งจริงคำนวณฝั่งเซิร์ฟเวอร์)
  */
 export function ListDialog({
   boardId,
   list,
+  anchor,
   onClose,
 }: {
   boardId: string;
   list?: ListWithCards;
+  anchor?: { listId: string; side: "before" | "after"; name: string };
   onClose: () => void;
 }) {
   const isEdit = Boolean(list);
@@ -39,7 +42,19 @@ export function ListDialog({
         {isEdit ? (
           <input type="hidden" name="listId" value={list!.id} />
         ) : (
-          <input type="hidden" name="boardId" value={boardId} />
+          <>
+            <input type="hidden" name="boardId" value={boardId} />
+            {anchor && (
+              <>
+                <input type="hidden" name="anchorListId" value={anchor.listId} />
+                <input type="hidden" name="side" value={anchor.side} />
+                <p className="text-muted -mt-1 text-xs">
+                  แทรก{anchor.side === "before" ? "ทางซ้าย" : "ทางขวา"}ของคอลัมน์{" "}
+                  <span className="text-text font-medium">{anchor.name}</span>
+                </p>
+              </>
+            )}
+          </>
         )}
 
         <div>

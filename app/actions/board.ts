@@ -5,7 +5,13 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/dal";
 
-const DEFAULT_LISTS = ["To Do", "Doing", "Done"];
+// คอลัมน์ตรวจกับคอลัมน์เสร็จสิ้นตั้งธงให้ตั้งแต่สร้าง (ตามคำแนะนำของอาจารย์) และเสร็จสิ้นอยู่ขวาสุดเสมอ
+const DEFAULT_LISTS = [
+  { name: "สิ่งที่ต้องทำ" },
+  { name: "กำลังทำ" },
+  { name: "กำลังตรวจสอบ", isReviewList: true },
+  { name: "เสร็จสิ้น", isDoneList: true },
+];
 
 /** ค่าจาก FormData เป็น unknown เสมอ — ช่องที่ปล่อยว่างให้เป็น null */
 function optionalText(value: FormDataEntryValue | null): string | null {
@@ -28,10 +34,7 @@ export async function createBoardAction(formData: FormData) {
       description: optionalText(formData.get("description")),
       ownerId: user.id,
       lists: {
-        create: DEFAULT_LISTS.map((listName, index) => ({
-          name: listName,
-          position: index + 1,
-        })),
+        create: DEFAULT_LISTS.map((list, index) => ({ ...list, position: index + 1 })),
       },
     },
   });

@@ -14,6 +14,7 @@ import {
   IconGrip,
   IconPaperclip,
 } from "@/app/components/ui/icons";
+import { ReviewChip } from "./card-review-result";
 import type { CardWithRelations } from "./types";
 
 /**
@@ -132,6 +133,7 @@ export function BoardCard({
             ได้แต้มแล้ว
           </Chip>
         )}
+        {card.review && <ReviewChip review={card.review} />}
         {card.priority && (
           <Chip color={card.priority.color} title={`ระดับความสำคัญ: ${card.priority.name}`}>
             <IconFlag size={11} />

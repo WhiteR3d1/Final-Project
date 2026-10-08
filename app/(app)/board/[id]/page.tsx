@@ -13,19 +13,20 @@ import { Chip } from "@/app/components/ui/chip";
 import { IconCalendar, IconTrophy } from "@/app/components/ui/icons";
 import { KanbanBoard } from "./kanban-board";
 import { BoardSettingsDialog } from "./board-settings-dialog";
+import { cardReviewSelect, publicUserSelect } from "./types";
 
 export default async function BoardPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
   const user = await getCurrentUser();
-  const access = await assertBoardAccess(id, user.id);
+  const access = await assertBoardAccess(id, user);
   if (!access) notFound();
 
   const board = await prisma.board.findUnique({
     where: { id },
     include: {
-      owner: true,
-      members: { include: { user: true } },
+      owner: { select: publicUserSelect },
+      members: { include: { user: { select: publicUserSelect } } },
       labels: true,
       priorities: { orderBy: { order: "asc" } },
       invites: {
@@ -43,11 +44,15 @@ export default async function BoardPage({ params }: { params: Promise<{ id: stri
                 orderBy: { position: "asc" },
                 include: { items: { orderBy: { position: "asc" } } },
               },
-              comments: { orderBy: { createdAt: "asc" }, include: { user: true } },
+              comments: {
+                orderBy: { createdAt: "asc" },
+                include: { user: { select: publicUserSelect } },
+              },
               labels: { include: { label: true } },
-              assignees: { include: { user: true } },
+              assignees: { include: { user: { select: publicUserSelect } } },
               priority: true,
               attachments: { orderBy: { createdAt: "asc" } },
+              review: { select: cardReviewSelect },
             },
           },
         },
@@ -86,7 +91,11 @@ export default async function BoardPage({ params }: { params: Promise<{ id: stri
         </div>
         <AvatarStack users={boardMembers} max={4} size={26} />
 
-        {!access.canEdit && <Chip tone="info">ดูอย่างเดียว</Chip>}
+        {access.role === "TEACHER" ? (
+          <Chip tone="info">อาจารย์ · ดูและตรวจงาน</Chip>
+        ) : (
+          !access.canEdit && <Chip tone="info">ดูอย่างเดียว</Chip>
+        )}
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Link
@@ -103,7 +112,8 @@ export default async function BoardPage({ params }: { params: Promise<{ id: stri
             labels={board.labels}
             priorities={board.priorities}
             invites={board.invites}
-            shareLink={board.shareLink}
+            // token ของลิงก์แชร์ให้เฉพาะเจ้าของ — คนอื่น (รวมอาจารย์) ไม่ต้องเห็น และไม่ควรมีไว้ใช้เข้าร่วมเอง
+            shareLink={access.isOwner ? board.shareLink : null}
             canEdit={access.canEdit}
             canInvite={access.isOwner}
           />
@@ -150,6 +160,7 @@ export default async function BoardPage({ params }: { params: Promise<{ id: stri
         boardMembers={boardMembers}
         boardPriorities={board.priorities}
         canEdit={access.canEdit}
+        canReview={access.canReview}
       />
 
       <Panel title="กิจกรรมล่าสุด" className="max-w-2xl">

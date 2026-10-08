@@ -1,6 +1,6 @@
 "use client";
 
-import type { Label, Priority, User } from "@/app/generated/prisma/client";
+import type { Label, Priority } from "@/app/generated/prisma/client";
 import { Modal } from "@/app/components/ui/modal";
 import { Avatar, displayName } from "@/app/components/ui/avatar";
 import { Chip } from "@/app/components/ui/chip";
@@ -23,7 +23,8 @@ import {
 } from "./card-field-selects";
 import { CardAttachments } from "./card-attachments";
 import { CardMoveButtons } from "./card-move-buttons";
-import type { CardWithRelations } from "./types";
+import { CardReviewResult } from "./card-review-result";
+import type { CardWithRelations, PublicUser } from "./types";
 
 const fieldClass =
   "border-line bg-panel-2 text-text placeholder:text-muted focus:border-accent w-full rounded-lg border px-3 py-2 text-sm focus:outline-none";
@@ -39,19 +40,23 @@ export function CardDetailDialog({
   boardMembers,
   boardPriorities,
   canEdit,
+  moveRightBlocked,
   onClose,
   onAwarded,
+  onError,
 }: {
   card: CardWithRelations;
   listName: string;
   listIndex: number;
   totalLists: number;
   boardLabels: Label[];
-  boardMembers: User[];
+  boardMembers: PublicUser[];
   boardPriorities: Priority[];
   canEdit: boolean;
+  moveRightBlocked: boolean;
   onClose: () => void;
   onAwarded: (points: number) => void;
+  onError: (message: string) => void;
 }) {
   const items = card.checklists.flatMap((checklist) => checklist.items);
   const doneItems = items.filter((item) => item.isCompleted).length;
@@ -260,10 +265,19 @@ export function CardDetailDialog({
                 cardId={card.id}
                 canMoveLeft={listIndex > 0}
                 canMoveRight={listIndex < totalLists - 1}
+                moveRightBlocked={moveRightBlocked}
                 onAwarded={onAwarded}
+                onError={onError}
               />
             )}
           </section>
+
+          {card.review && (
+            <section>
+              <h3 className={sectionTitleClass}>ผลการตรวจของอาจารย์</h3>
+              <CardReviewResult review={card.review} />
+            </section>
+          )}
 
           <section>
             <h3 className={sectionTitleClass}>ระดับความสำคัญ</h3>

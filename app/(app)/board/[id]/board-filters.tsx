@@ -1,6 +1,7 @@
 "use client";
 
-import type { Priority, User } from "@/app/generated/prisma/client";
+import type { Priority } from "@/app/generated/prisma/client";
+import type { PublicUser } from "./types";
 import { displayName } from "@/app/components/ui/avatar";
 import { IconSearch } from "@/app/components/ui/icons";
 
@@ -40,7 +41,7 @@ export function BoardFilters({
 }: {
   filters: BoardFilterState;
   onChange: (next: BoardFilterState) => void;
-  members: User[];
+  members: PublicUser[];
   priorities: Priority[];
   visibleCount: number;
   totalCount: number;

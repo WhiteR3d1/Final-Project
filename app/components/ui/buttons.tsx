@@ -10,19 +10,28 @@ export function SubmitButton({
   className = "",
   title,
   ariaLabel,
+  name,
+  value,
+  disabled = false,
 }: {
   children: ReactNode;
   pendingLabel?: ReactNode;
   className?: string;
   title?: string;
   ariaLabel?: string;
+  /** ฟอร์มที่มีหลายปุ่ม — name/value ของปุ่มที่กดจะติดไปกับ FormData บอก action ว่ากดปุ่มไหน */
+  name?: string;
+  value?: string;
+  disabled?: boolean;
 }) {
   const { pending } = useFormStatus();
 
   return (
     <button
       type="submit"
-      disabled={pending}
+      name={name}
+      value={value}
+      disabled={pending || disabled}
       title={title}
       aria-label={ariaLabel}
       className={`disabled:opacity-50 ${className}`}

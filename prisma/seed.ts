@@ -3,6 +3,9 @@ import { prisma } from "../lib/prisma";
 import { ActivityType } from "../app/generated/prisma/enums";
 
 const DEMO_PASSWORD = "demopass123";
+// บัญชีอาจารย์ตัวอย่าง — จะเป็นอาจารย์จริงก็ต่อเมื่ออีเมลนี้อยู่ใน TEACHER_EMAILS ของ .env
+const TEACHER_EMAIL = "teacher@kanban.dev";
+const TEACHER_PASSWORD = "teacherpass123";
 
 async function main() {
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
@@ -17,6 +20,16 @@ async function main() {
     },
   });
 
+  const teacher = await prisma.user.upsert({
+    where: { email: TEACHER_EMAIL },
+    update: { passwordHash: await bcrypt.hash(TEACHER_PASSWORD, 10) },
+    create: {
+      email: TEACHER_EMAIL,
+      name: "อาจารย์ตัวอย่าง",
+      passwordHash: await bcrypt.hash(TEACHER_PASSWORD, 10),
+    },
+  });
+
   const board = await prisma.board.upsert({
     where: { id: "seed-board-1" },
     update: {},
@@ -28,17 +41,19 @@ async function main() {
     },
   });
 
+  // คอลัมน์ตรวจอยู่ก่อนคอลัมน์เสร็จสิ้น ซึ่งต้องอยู่ขวาสุดเสมอ
   const listSeeds = [
-    { id: "seed-list-todo", name: "To Do", position: 1, isDoneList: false },
-    { id: "seed-list-doing", name: "Doing", position: 2, isDoneList: false },
-    { id: "seed-list-done", name: "Done", position: 3, isDoneList: true },
+    { id: "seed-list-todo", name: "To Do", position: 1, isDoneList: false, isReviewList: false },
+    { id: "seed-list-doing", name: "Doing", position: 2, isDoneList: false, isReviewList: false },
+    { id: "seed-list-review", name: "กำลังตรวจสอบ", position: 2.5, isDoneList: false, isReviewList: true },
+    { id: "seed-list-done", name: "Done", position: 3, isDoneList: true, isReviewList: false },
   ];
 
-  const [todo, doing, done] = await Promise.all(
+  const [todo, doing, review, done] = await Promise.all(
     listSeeds.map((list) =>
       prisma.list.upsert({
         where: { id: list.id },
-        update: { isDoneList: list.isDoneList },
+        update: { isDoneList: list.isDoneList, isReviewList: list.isReviewList },
         create: { ...list, boardId: board.id },
       })
     )
@@ -76,6 +91,20 @@ async function main() {
       },
     }),
     prisma.card.upsert({
+      where: { id: "seed-card-4" },
+      update: {},
+      create: {
+        id: "seed-card-4",
+        title: "ส่งรายงานบทที่ 1",
+        listId: review.id,
+        position: 1,
+        dueDate: daysFromNow(1),
+        createdById: user.id,
+        submittedById: user.id,
+        submittedAt: new Date(),
+      },
+    }),
+    prisma.card.upsert({
       where: { id: "seed-card-3" },
       update: {},
       create: {
@@ -105,8 +134,14 @@ async function main() {
     });
   }
 
-  console.log("Seeded:", { user: user.email, board: board.name, lists: [todo.name, doing.name, done.name], cards: cards.map((c) => c.title) });
+  console.log("Seeded:", {
+    user: user.email,
+    board: board.name,
+    lists: [todo.name, doing.name, review.name, done.name],
+    cards: cards.map((c) => c.title),
+  });
   console.log(`Login with: ${user.email} / ${DEMO_PASSWORD}`);
+  console.log(`Teacher: ${teacher.email} / ${TEACHER_PASSWORD} (ต้องอยู่ใน TEACHER_EMAILS ของ .env)`);
 }
 
 main()

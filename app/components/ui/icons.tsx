@@ -277,3 +277,13 @@ export function IconImage(props: IconProps) {
     </svg>
   );
 }
+
+export function IconReview(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <rect x="5" y="4" width="14" height="17" rx="2" />
+      <path d="M9 4V3h6v1" />
+      <path d="m9 13 2 2 4-4" />
+    </svg>
+  );
+}

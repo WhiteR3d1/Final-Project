@@ -21,9 +21,9 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { Label, Priority, User } from "@/app/generated/prisma/client";
+import type { Label, Priority } from "@/app/generated/prisma/client";
 import { dueBucket } from "@/lib/due";
-import { positionBetween, resolveListDropTarget } from "@/lib/drag";
+import { clampBeforeDone, positionBetween, resolveListDropTarget } from "@/lib/drag";
 import { Toast } from "@/app/components/ui/toast";
 import { IconGrip, IconPlus } from "@/app/components/ui/icons";
 import { reorderListAction, reorderCardAction } from "./actions";
@@ -38,9 +38,16 @@ import {
   isFilterActive,
   type BoardFilterState,
 } from "./board-filters";
-import type { CardWithRelations, ListWithCards } from "./types";
+import type { CardWithRelations, ListWithCards, PublicUser } from "./types";
 
 const LIST_ACCENTS = ["bg-info", "bg-warn", "bg-accent", "bg-danger", "bg-info"];
+
+const REVIEW_REQUIRED_NOTICE = "ต้องให้อาจารย์ตรวจก่อน การ์ดถึงจะเข้าคอลัมน์เสร็จสิ้นได้";
+
+/** หน้าต่างคอลัมน์: สร้างใหม่ (แทรกข้าง anchor ได้) หรือแก้ไขคอลัมน์เดิม */
+type ListDialogState =
+  | { mode: "new"; anchorId?: string; side?: "before" | "after" }
+  | { mode: "edit"; listId: string };
 
 export function KanbanBoard({
   boardId,
@@ -49,23 +56,26 @@ export function KanbanBoard({
   boardMembers,
   boardPriorities,
   canEdit,
+  canReview,
 }: {
   boardId: string;
   initialLists: ListWithCards[];
   boardLabels: Label[];
-  boardMembers: User[];
+  boardMembers: PublicUser[];
   boardPriorities: Priority[];
   canEdit: boolean;
+  /** อาจารย์ — พาการ์ดเข้าคอลัมน์เสร็จสิ้นได้แม้บอร์ดจะมีคอลัมน์ตรวจ */
+  canReview: boolean;
 }) {
   const [lists, setLists] = useState(initialLists);
   const [activeCard, setActiveCard] = useState<CardWithRelations | null>(null);
   const [activeList, setActiveList] = useState<ListWithCards | null>(null);
   const [reward, setReward] = useState<{ key: number; points: number } | null>(null);
+  const [notice, setNotice] = useState<{ key: number; message: string } | null>(null);
   const [filters, setFilters] = useState<BoardFilterState>(EMPTY_FILTERS);
   const [openCardId, setOpenCardId] = useState<string | null>(null);
   const [syncedLists, setSyncedLists] = useState(initialLists);
-  // null = ปิด, "new" = สร้างคอลัมน์ใหม่, id = แก้ไขคอลัมน์นั้น
-  const [listDialog, setListDialog] = useState<string | null>(null);
+  const [listDialog, setListDialog] = useState<ListDialogState | null>(null);
   const [addCardListId, setAddCardListId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
@@ -82,6 +92,16 @@ export function KanbanBoard({
     setReward({ key, points });
     setTimeout(() => setReward((current) => (current?.key === key ? null : current)), 2500);
   }
+
+  function warn(message: string) {
+    const key = Date.now();
+    setNotice({ key, message });
+    setTimeout(() => setNotice((current) => (current?.key === key ? null : current)), 3500);
+  }
+
+  // บอร์ดที่มีคอลัมน์ตรวจ = การ์ดเข้าคอลัมน์เสร็จสิ้นได้ต่อเมื่ออาจารย์อนุมัติ (ด่านจริงอยู่ฝั่ง action)
+  const requiresReview = lists.some((list) => list.isReviewList);
+  const blockedFromDone = requiresReview && !canReview;
 
   const filtering = isFilterActive(filters);
   // ลากไม่ได้ทั้งตอนกรอง (ตำแหน่งเพื่อนบ้านเพี้ยน) และตอนเป็น viewer
@@ -123,9 +143,8 @@ export function KanbanBoard({
     ? lists.findIndex((list) => list.id === openCard.listId)
     : -1;
 
-  const editingList = listDialog && listDialog !== "new"
-    ? lists.find((list) => list.id === listDialog)
-    : undefined;
+  const editingList =
+    listDialog?.mode === "edit" ? lists.find((list) => list.id === listDialog.listId) : undefined;
   const addCardList = addCardListId
     ? lists.find((list) => list.id === addCardListId)
     : undefined;
@@ -166,8 +185,11 @@ export function KanbanBoard({
       if (!overListId) return;
 
       const oldIndex = lists.findIndex((list) => list.id === activeId);
-      const newIndex = lists.findIndex((list) => list.id === overListId);
-      if (oldIndex === -1 || newIndex === -1) return;
+      const overIndex = lists.findIndex((list) => list.id === overListId);
+      if (oldIndex === -1 || overIndex === -1) return;
+      // คอลัมน์เสร็จสิ้นต้องอยู่ขวาสุดเสมอ ลากไปทับมันได้แค่ช่องก่อนหน้า
+      const newIndex = clampBeforeDone(lists, oldIndex, overIndex);
+      if (newIndex === oldIndex) return;
 
       const reordered = arrayMove(lists, oldIndex, newIndex);
       const newPosition = positionBetween(
@@ -198,6 +220,10 @@ export function KanbanBoard({
     if (destListIndex === -1) return;
 
     const destList = lists[destListIndex];
+    if (blockedFromDone && destList.isDoneList && destListIndex !== sourceListIndex) {
+      warn(REVIEW_REQUIRED_NOTICE);
+      return;
+    }
     const destCardsWithoutDragged = destList.cards.filter((c) => c.id !== cardId);
     const destIndex = overIsList
       ? destCardsWithoutDragged.length
@@ -236,6 +262,12 @@ export function KanbanBoard({
 
     startTransition(async () => {
       const result = await reorderCardAction(cardId, destList.id, newPosition);
+      if (result && "error" in result) {
+        // action ปฏิเสธ = ไม่มี revalidate มาแก้ state ให้ ต้องย้อน optimistic update เอง
+        setLists(initialLists);
+        warn(result.error);
+        return;
+      }
       if (result?.awarded) celebrate(result.awarded);
     });
   }
@@ -271,7 +303,8 @@ export function KanbanBoard({
                 accent={LIST_ACCENTS[listIndex % LIST_ACCENTS.length]}
                 dragDisabled={dragDisabled}
                 canEdit={canEdit}
-                onEdit={() => setListDialog(list.id)}
+                onEdit={() => setListDialog({ mode: "edit", listId: list.id })}
+                onInsert={(side) => setListDialog({ mode: "new", anchorId: list.id, side })}
                 onAddCard={() => setAddCardListId(list.id)}
               >
                 <SortableContext
@@ -300,7 +333,7 @@ export function KanbanBoard({
           {canEdit && (
             <button
               type="button"
-              onClick={() => setListDialog("new")}
+              onClick={() => setListDialog({ mode: "new" })}
               className="border-line text-muted hover:text-text hover:border-accent flex w-72 shrink-0 items-center justify-center gap-1.5 self-start rounded-2xl border border-dashed px-3 py-3 text-sm"
             >
               <IconPlus size={16} /> เพิ่มคอลัมน์
@@ -336,8 +369,12 @@ export function KanbanBoard({
           boardMembers={boardMembers}
           boardPriorities={boardPriorities}
           canEdit={canEdit}
+          moveRightBlocked={
+            blockedFromDone && Boolean(lists[openCardListIndex + 1]?.isDoneList)
+          }
           onClose={() => setOpenCardId(null)}
           onAwarded={celebrate}
+          onError={warn}
         />
       )}
 
@@ -345,6 +382,15 @@ export function KanbanBoard({
         <ListDialog
           boardId={boardId}
           list={editingList}
+          anchor={
+            listDialog.mode === "new" && listDialog.anchorId
+              ? {
+                  listId: listDialog.anchorId,
+                  side: listDialog.side ?? "after",
+                  name: lists.find((list) => list.id === listDialog.anchorId)?.name ?? "",
+                }
+              : undefined
+          }
           onClose={() => setListDialog(null)}
         />
       )}
@@ -361,6 +407,7 @@ export function KanbanBoard({
       )}
 
       {reward && <Toast>+{reward.points} แต้ม! 🎉</Toast>}
+      {notice && !reward && <Toast tone="warn">{notice.message}</Toast>}
     </>
   );
 }
@@ -371,6 +418,7 @@ function SortableList({
   dragDisabled,
   canEdit,
   onEdit,
+  onInsert,
   onAddCard,
   children,
 }: {
@@ -379,16 +427,19 @@ function SortableList({
   dragDisabled: boolean;
   canEdit: boolean;
   onEdit: () => void;
+  onInsert: (side: "before" | "after") => void;
   onAddCard: () => void;
   children: React.ReactNode;
 }) {
+  // คอลัมน์เสร็จสิ้นติดขวาสุดเสมอ จึงลากตัวมันเองไม่ได้ (การ์ดข้างในยังลากได้ตามปกติ)
+  const listDragDisabled = dragDisabled || list.isDoneList;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: list.id,
-    disabled: dragDisabled,
+    disabled: listDragDisabled,
   });
 
   function handlePointerDown(event: React.PointerEvent<HTMLDivElement>) {
-    if (dragDisabled) return;
+    if (listDragDisabled) return;
     const target = event.target as HTMLElement;
     // ช่องกรอกกับเมนูต้องใช้งานได้ตามปกติ ห้ามกลายเป็นการลากคอลัมน์
     if (target.closest("input, textarea, select, button, [data-no-drag]")) return;
@@ -415,7 +466,7 @@ function SortableList({
           data-drag-handle
           {...attributes}
           {...listeners}
-          disabled={dragDisabled}
+          disabled={listDragDisabled}
           aria-label="ลากเพื่อย้ายคอลัมน์"
           className="text-muted/50 hover:bg-panel hover:text-muted focus-visible:opacity-100 shrink-0 cursor-grab rounded p-0.5 opacity-0 group-hover/list:opacity-100 active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-0"
         >
@@ -438,6 +489,7 @@ function SortableList({
               />
               <span className="truncate">{list.name}</span>
               {list.isDoneList && <span className="shrink-0 opacity-80">· เสร็จสิ้น</span>}
+              {list.isReviewList && <span className="shrink-0 opacity-80">· ตรวจสอบ</span>}
             </>
           );
 
@@ -457,7 +509,9 @@ function SortableList({
             listId={list.id}
             listName={list.name}
             isDoneList={list.isDoneList}
+            isReviewList={list.isReviewList}
             onEdit={onEdit}
+            onInsert={onInsert}
           />
         )}
       </div>

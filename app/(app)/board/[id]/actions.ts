@@ -7,9 +7,11 @@ import { del, put } from "@vercel/blob";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/dal";
-import { assertBoardAccess } from "@/lib/board-access";
+import { assertBoardAccess, type BoardAccess } from "@/lib/board-access";
 import { ActivityType, BoardRole, InviteStatus } from "@/app/generated/prisma/enums";
-import { awardCardCompletion } from "@/lib/gamification";
+import { syncCardCompletion } from "@/lib/card-completion";
+import { insertListPosition, isDoneListName, positionBetween } from "@/lib/drag";
+import type { Prisma } from "@/app/generated/prisma/client";
 import {
   MAX_ATTACHMENT_BYTES,
   formatFileSize,
@@ -19,68 +21,6 @@ import {
   sanitizeAttachmentUrl,
 } from "@/lib/attachments";
 
-type CardForCompletion = {
-  id: string;
-  title: string;
-  isCompleted: boolean;
-  completedAt: Date | null;
-  dueDate: Date | null;
-};
-
-/**
- * ซิงก์สถานะ "เสร็จ" ของการ์ดกับคอลัมน์ที่มันไปอยู่ แล้วคืนแต้มที่เพิ่งได้ (0 = ไม่ได้แต้มใหม่)
- *
- * ลากออกจากคอลัมน์เสร็จสิ้นได้ตามปกติ — การ์ดกลับเป็น "กำลังทำ" แต่ completedAt กับ PointEvent
- * ยังอยู่ครบ แต้มที่ได้ไปแล้วจึงไม่ถูกริบ และการลากกลับเข้าไปใหม่ก็ไม่ได้แต้มซ้ำ
- */
-async function syncCardCompletion(
-  card: CardForCompletion,
-  targetList: { isDoneList: boolean },
-  boardId: string,
-  user: { id: string; name: string | null; email: string }
-): Promise<number> {
-  if (targetList.isDoneList && !card.isCompleted) {
-    const completedAt = card.completedAt ?? new Date();
-
-    const awarded = await prisma.$transaction(async (tx) => {
-      await tx.card.update({
-        where: { id: card.id },
-        data: { isCompleted: true, completedAt },
-      });
-
-      return awardCardCompletion(tx, {
-        userId: user.id,
-        boardId,
-        card: { id: card.id, dueDate: card.dueDate, completedAt: card.completedAt },
-        completedAt,
-      });
-    });
-
-    await prisma.activity.create({
-      data: {
-        boardId,
-        cardId: card.id,
-        userId: user.id,
-        type: ActivityType.CARD_COMPLETED,
-        message: `${user.name ?? user.email} completed "${card.title}"${
-          awarded > 0 ? ` (+${awarded} points)` : ""
-        }`,
-      },
-    });
-
-    return awarded;
-  }
-
-  if (!targetList.isDoneList && card.isCompleted) {
-    await prisma.card.update({
-      where: { id: card.id },
-      data: { isCompleted: false },
-    });
-  }
-
-  return 0;
-}
-
 /** ค่าจาก FormData เป็น unknown เสมอ — ตัวช่วยอ่านช่องที่ปล่อยว่างได้ให้เป็น null */
 function optionalText(value: FormDataEntryValue | null): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -89,19 +29,27 @@ function optionalText(value: FormDataEntryValue | null): string | null {
 export async function createListAction(formData: FormData) {
   const boardId = formData.get("boardId");
   const name = formData.get("name");
+  // แทรกข้างคอลัมน์ไหน (จากเมนู ⋯) — ไม่ส่งมา = ต่อท้าย
+  const anchorListId = formData.get("anchorListId");
+  const side = formData.get("side") === "before" ? "before" : "after";
 
   if (typeof boardId !== "string" || typeof name !== "string" || !name.trim()) {
     return;
   }
 
   const user = await getCurrentUser();
-  const access = await assertBoardAccess(boardId, user.id);
+  const access = await assertBoardAccess(boardId, user);
   if (!access?.canEdit) return;
 
-  const lastList = await prisma.list.findFirst({
+  // คำนวณตำแหน่งจากคอลัมน์จริงใน DB ไม่เชื่อตำแหน่งจาก client
+  const lists = await prisma.list.findMany({
     where: { boardId },
-    orderBy: { position: "desc" },
+    orderBy: { position: "asc" },
+    select: { id: true, position: true, isDoneList: true },
   });
+
+  // ตามคำแนะนำของอาจารย์: บอร์ดที่ยังไม่มีคอลัมน์เสร็จสิ้น ตั้งชื่อว่า Done/เสร็จสิ้น = เป็นคอลัมน์เสร็จสิ้นเลย
+  const autoDone = isDoneListName(name) && !lists.some((list) => list.isDoneList);
 
   await prisma.list.create({
     data: {
@@ -109,11 +57,16 @@ export async function createListAction(formData: FormData) {
       name: name.trim(),
       color: optionalText(formData.get("color")),
       description: optionalText(formData.get("description")),
-      position: (lastList?.position ?? 0) + 1,
+      isDoneList: autoDone,
+      // คอลัมน์เสร็จสิ้นอยู่ขวาสุดเสมอ คอลัมน์อื่นจึงแทรกได้แค่ก่อนหน้ามัน
+      position: autoDone
+        ? positionBetween(lists[lists.length - 1]?.position, undefined)
+        : insertListPosition(lists, typeof anchorListId === "string" ? anchorListId : null, side),
     },
   });
 
   revalidatePath(`/board/${boardId}`);
+  if (autoDone) revalidatePath("/");
 }
 
 /** แก้ชื่อ/สี/คำอธิบายของคอลัมน์ — ทางเดียวที่ใช้แก้คอลัมน์ (ทั้งกดที่ชื่อและเมนู ⋯) */
@@ -128,19 +81,29 @@ export async function updateListAction(formData: FormData) {
   const user = await getCurrentUser();
 
   const list = await prisma.list.findUniqueOrThrow({ where: { id: listId } });
-  const access = await assertBoardAccess(list.boardId, user.id);
+  const access = await assertBoardAccess(list.boardId, user);
   if (!access?.canEdit) return;
 
-  await prisma.list.update({
-    where: { id: listId },
-    data: {
-      name: name.trim(),
-      color: optionalText(formData.get("color")),
-      description: optionalText(formData.get("description")),
-    },
+  // เปลี่ยนชื่อเป็น Done/เสร็จสิ้น ในบอร์ดที่ยังไม่มีคอลัมน์เสร็จสิ้น = ตั้งธงให้เลย (เหมือนตอนสร้าง)
+  const shouldFlagDone =
+    !list.isDoneList &&
+    isDoneListName(name) &&
+    (await prisma.list.count({ where: { boardId: list.boardId, isDoneList: true } })) === 0;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.list.update({
+      where: { id: listId },
+      data: {
+        name: name.trim(),
+        color: optionalText(formData.get("color")),
+        description: optionalText(formData.get("description")),
+      },
+    });
+    if (shouldFlagDone) await flagDoneList(tx, list.boardId, listId);
   });
 
   revalidatePath(`/board/${list.boardId}`);
+  if (shouldFlagDone) revalidatePath("/");
 }
 
 export async function deleteListAction(formData: FormData) {
@@ -150,7 +113,7 @@ export async function deleteListAction(formData: FormData) {
   const user = await getCurrentUser();
 
   const list = await prisma.list.findUniqueOrThrow({ where: { id: listId } });
-  const access = await assertBoardAccess(list.boardId, user.id);
+  const access = await assertBoardAccess(list.boardId, user);
   if (!access?.canEdit) return;
 
   await prisma.list.delete({ where: { id: listId } });
@@ -168,18 +131,63 @@ export async function deleteListAction(formData: FormData) {
 }
 
 export async function reorderListAction(listId: string, newPosition: number) {
+  // เรียกจาก client ตรง ๆ ค่าที่ส่งมาจึงเป็นอะไรก็ได้ — NaN/Infinity ทำลำดับคอลัมน์พังทั้งบอร์ด
+  if (typeof listId !== "string" || !Number.isFinite(newPosition)) return;
+
   const user = await getCurrentUser();
 
   const list = await prisma.list.findUniqueOrThrow({ where: { id: listId } });
-  const access = await assertBoardAccess(list.boardId, user.id);
+  const access = await assertBoardAccess(list.boardId, user);
   if (!access?.canEdit) return;
+
+  // คอลัมน์เสร็จสิ้นอยู่ขวาสุดเสมอ — ตัวมันเองลากไม่ได้ และคอลัมน์อื่นห้ามเลยมันไป
+  // (ฝั่ง client กันไว้แล้วด้วย clampBeforeDone แต่ client ถูกข้ามได้)
+  if (list.isDoneList) return;
+
+  let position = newPosition;
+  const doneList = await prisma.list.findFirst({
+    where: { boardId: list.boardId, isDoneList: true },
+    select: { position: true },
+  });
+  if (doneList && position >= doneList.position) {
+    const before = await prisma.list.findFirst({
+      where: { boardId: list.boardId, id: { not: listId }, position: { lt: doneList.position } },
+      orderBy: { position: "desc" },
+      select: { position: true },
+    });
+    position = positionBetween(before?.position, doneList.position);
+  }
 
   await prisma.list.update({
     where: { id: listId },
-    data: { position: newPosition },
+    data: { position },
   });
 
   revalidatePath(`/board/${list.boardId}`);
+}
+
+/**
+ * priority / ป้าย / ผู้รับผิดชอบ ที่ client ส่งมาต้องเป็นของบอร์ดนี้จริง ไม่งั้นผูกของบอร์ดอื่น
+ * (หรือผู้ใช้คนไหนก็ได้ในระบบ) เข้าการ์ดได้ — owner ไม่มีแถวใน BoardMember จึงต้องนับ ownerId แยก
+ */
+async function cardRefsInBoard(
+  db: Prisma.TransactionClient,
+  board: Pick<BoardAccess, "id" | "ownerId">,
+  { priorityId = null, labelIds = [], assigneeIds = [] }: {
+    priorityId?: string | null; labelIds?: string[]; assigneeIds?: string[];
+  },
+): Promise<boolean> {
+  if (priorityId && !(await db.priority.findFirst({ where: { id: priorityId, boardId: board.id }, select: { id: true } })))
+    return false;
+
+  const uniqueLabelIds = [...new Set(labelIds)];
+  if (uniqueLabelIds.length &&
+    (await db.label.count({ where: { id: { in: uniqueLabelIds }, boardId: board.id } })) !== uniqueLabelIds.length)
+    return false;
+
+  const memberIds = [...new Set(assigneeIds)].filter((id) => id !== board.ownerId);
+  return !memberIds.length ||
+    (await db.boardMember.count({ where: { boardId: board.id, userId: { in: memberIds } } })) === memberIds.length;
 }
 
 export async function createCardAction(formData: FormData): Promise<
@@ -191,7 +199,7 @@ export async function createCardAction(formData: FormData): Promise<
   const user = await getCurrentUser();
   const list = await prisma.list.findUnique({ where: { id: input.listId }, select: { boardId: true } });
   if (!list) return { ok: false, error: "ไม่พบคอลัมน์นี้" };
-  const access = await assertBoardAccess(list.boardId, user.id);
+  const access = await assertBoardAccess(list.boardId, user);
   if (!access?.canEdit) return { ok: false, error: "ไม่มีสิทธิ์เพิ่มการ์ดในบอร์ดนี้" };
 
   // ใช้ ID เดิมเมื่อ retry หลังคำตอบขาดหาย ป้องกันสร้างการ์ดซ้ำ
@@ -205,11 +213,7 @@ export async function createCardAction(formData: FormData): Promise<
 
   try {
     const result = await prisma.$transaction(async (tx) => {
-      const priority = input.priorityId ? await tx.priority.findFirst({ where: { id: input.priorityId, boardId: list.boardId } }) : null;
-      const labels = await tx.label.findMany({ where: { id: { in: input.labelIds }, boardId: list.boardId } });
-      const members = await tx.boardMember.findMany({ where: { boardId: list.boardId, userId: { in: input.assigneeIds } }, select: { userId: true } });
-      const memberIds = new Set([access.ownerId, ...members.map((member) => member.userId)]);
-      if ((input.priorityId && !priority) || labels.length !== input.labelIds.length || input.assigneeIds.some((id) => !memberIds.has(id)))
+      if (!(await cardRefsInBoard(tx, access, input)))
         return { ok: false as const, error: "ระดับความสำคัญ ป้าย หรือผู้รับผิดชอบไม่อยู่ในบอร์ดนี้" };
       const last = await tx.card.findFirst({ where: { listId: input.listId }, orderBy: { position: "desc" } });
       const card = await tx.card.create({ data: {
@@ -236,7 +240,10 @@ export async function createCardAction(formData: FormData): Promise<
   }
 }
 
-export async function moveCardAction(cardId: string, direction: "left" | "right") {
+export async function moveCardAction(
+  cardId: string,
+  direction: "left" | "right"
+): Promise<{ awarded: number } | { error: string } | undefined> {
   const user = await getCurrentUser();
 
   const card = await prisma.card.findUniqueOrThrow({
@@ -250,7 +257,7 @@ export async function moveCardAction(cardId: string, direction: "left" | "right"
     },
   });
 
-  const access = await assertBoardAccess(card.list.boardId, user.id);
+  const access = await assertBoardAccess(card.list.boardId, user);
   if (!access?.canEdit) return;
 
   const lists = card.list.board.lists;
@@ -260,34 +267,41 @@ export async function moveCardAction(cardId: string, direction: "left" | "right"
   if (targetIndex < 0 || targetIndex >= lists.length) return;
 
   const targetList = lists[targetIndex];
+  if (needsTeacherApproval(access, lists, targetList, true)) {
+    return { error: REVIEW_REQUIRED_ERROR };
+  }
 
   const lastCardInTarget = await prisma.card.findFirst({
     where: { listId: targetList.id },
     orderBy: { position: "desc" },
   });
 
-  await prisma.card.update({
-    where: { id: cardId },
-    data: {
-      listId: targetList.id,
-      position: (lastCardInTarget?.position ?? 0) + 1,
-    },
-  });
+  const awarded = await prisma.$transaction(async (tx) => {
+    await tx.card.update({
+      where: { id: cardId },
+      data: {
+        listId: targetList.id,
+        position: (lastCardInTarget?.position ?? 0) + 1,
+        ...submissionFields(targetList, true, user.id),
+      },
+    });
 
-  await prisma.activity.create({
-    data: {
-      boardId: card.list.boardId,
-      cardId: card.id,
-      userId: user.id,
-      type: ActivityType.CARD_MOVED,
-      message: `${user.name ?? user.email} moved "${card.title}" to ${targetList.name}`,
-      data: { fromListId: card.listId, toListId: targetList.id },
-    },
-  });
+    await tx.activity.create({
+      data: {
+        boardId: card.list.boardId,
+        cardId: card.id,
+        userId: user.id,
+        type: ActivityType.CARD_MOVED,
+        message: `${user.name ?? user.email} moved "${card.title}" to ${targetList.name}`,
+        data: { fromListId: card.listId, toListId: targetList.id },
+      },
+    });
 
-  const awarded = await syncCardCompletion(card, targetList, card.list.boardId, user);
+    return syncCardCompletion(tx, card, targetList, card.list.boardId, user);
+  });
 
   revalidatePath(`/board/${card.list.boardId}`);
+  if (targetList.isReviewList || card.list.isReviewList) revalidatePath("/review");
   if (awarded > 0) revalidatePath("/");
 
   return { awarded };
@@ -297,7 +311,9 @@ export async function reorderCardAction(
   cardId: string,
   targetListId: string,
   newPosition: number
-) {
+): Promise<{ awarded: number } | { error: string } | undefined> {
+  if (!Number.isFinite(newPosition)) return;
+
   const user = await getCurrentUser();
 
   const card = await prisma.card.findUniqueOrThrow({
@@ -305,38 +321,50 @@ export async function reorderCardAction(
     include: { list: true },
   });
 
-  const access = await assertBoardAccess(card.list.boardId, user.id);
+  const access = await assertBoardAccess(card.list.boardId, user);
   if (!access?.canEdit) return;
 
-  const targetList = await prisma.list.findUniqueOrThrow({
-    where: { id: targetListId },
+  const boardLists = await prisma.list.findMany({
+    where: { boardId: card.list.boardId },
+    select: { id: true, name: true, isDoneList: true, isReviewList: true },
   });
-
-  if (targetList.boardId !== card.list.boardId) return;
+  const targetList = boardLists.find((list) => list.id === targetListId);
+  // ปลายทางต้องอยู่บอร์ดเดียวกัน ไม่งั้นย้ายการ์ดข้ามไปบอร์ดที่ไม่มีสิทธิ์ได้
+  if (!targetList) return;
 
   const listChanged = targetListId !== card.listId;
-
-  await prisma.card.update({
-    where: { id: cardId },
-    data: { listId: targetListId, position: newPosition },
-  });
-
-  if (listChanged) {
-    await prisma.activity.create({
-      data: {
-        boardId: card.list.boardId,
-        cardId: card.id,
-        userId: user.id,
-        type: ActivityType.CARD_MOVED,
-        message: `${user.name ?? user.email} moved "${card.title}" to ${targetList.name}`,
-        data: { fromListId: card.listId, toListId: targetListId },
-      },
-    });
+  if (needsTeacherApproval(access, boardLists, targetList, listChanged)) {
+    return { error: REVIEW_REQUIRED_ERROR };
   }
 
-  const awarded = await syncCardCompletion(card, targetList, card.list.boardId, user);
+  const awarded = await prisma.$transaction(async (tx) => {
+    await tx.card.update({
+      where: { id: cardId },
+      data: {
+        listId: targetListId,
+        position: newPosition,
+        ...submissionFields(targetList, listChanged, user.id),
+      },
+    });
+
+    if (listChanged) {
+      await tx.activity.create({
+        data: {
+          boardId: card.list.boardId,
+          cardId: card.id,
+          userId: user.id,
+          type: ActivityType.CARD_MOVED,
+          message: `${user.name ?? user.email} moved "${card.title}" to ${targetList.name}`,
+          data: { fromListId: card.listId, toListId: targetListId },
+        },
+      });
+    }
+
+    return syncCardCompletion(tx, card, targetList, card.list.boardId, user);
+  });
 
   revalidatePath(`/board/${card.list.boardId}`);
+  if (listChanged && (targetList.isReviewList || card.list.isReviewList)) revalidatePath("/review");
   if (awarded > 0) revalidatePath("/");
 
   return { awarded };
@@ -361,8 +389,11 @@ export async function updateCardAction(formData: FormData) {
   });
 
   const boardId = card.list.boardId;
-  const access = await assertBoardAccess(boardId, user.id);
+  const access = await assertBoardAccess(boardId, user);
   if (!access?.canEdit) return;
+
+  const nextPriorityId = typeof priorityId === "string" && priorityId ? priorityId : null;
+  if (!(await cardRefsInBoard(prisma, access, { priorityId: nextPriorityId }))) return;
 
   await prisma.card.update({
     where: { id: cardId },
@@ -370,7 +401,7 @@ export async function updateCardAction(formData: FormData) {
       title: title.trim(),
       description:
         typeof description === "string" && description.trim() ? description.trim() : null,
-      priorityId: typeof priorityId === "string" && priorityId ? priorityId : null,
+      priorityId: nextPriorityId,
       dueDate: typeof dueDate === "string" && dueDate ? new Date(dueDate) : null,
     },
   });
@@ -402,11 +433,12 @@ export async function setCardPriorityAction(formData: FormData) {
   });
 
   const boardId = card.list.boardId;
-  const access = await assertBoardAccess(boardId, user.id);
+  const access = await assertBoardAccess(boardId, user);
   if (!access?.canEdit) return;
 
   // เมนูมีแถว "ไม่กำหนด" อยู่แล้ว (ส่งค่าว่างมา) กดแถวที่เลือกอยู่จึงควรคงค่าเดิม ไม่ใช่ toggle
   const nextPriorityId = priorityId || null;
+  if (!(await cardRefsInBoard(prisma, access, { priorityId: nextPriorityId }))) return;
 
   await prisma.card.update({
     where: { id: cardId },
@@ -428,7 +460,7 @@ export async function deleteCardAction(formData: FormData) {
   });
 
   const boardId = card.list.boardId;
-  const access = await assertBoardAccess(boardId, user.id);
+  const access = await assertBoardAccess(boardId, user);
   if (!access?.canEdit) return;
 
   await prisma.card.delete({ where: { id: cardId } });
@@ -456,7 +488,7 @@ export async function createChecklistAction(formData: FormData) {
     include: { list: true },
   });
 
-  const access = await assertBoardAccess(card.list.boardId, user.id);
+  const access = await assertBoardAccess(card.list.boardId, user);
   if (!access?.canEdit) return;
 
   const lastChecklist = await prisma.checklist.findFirst({
@@ -491,7 +523,7 @@ export async function addChecklistItemAction(formData: FormData) {
   });
 
   const boardId = checklist.card.list.boardId;
-  const access = await assertBoardAccess(boardId, user.id);
+  const access = await assertBoardAccess(boardId, user);
   if (!access?.canEdit) return;
 
   const lastItem = await prisma.checklistItem.findFirst({
@@ -522,7 +554,7 @@ export async function toggleChecklistItemAction(formData: FormData) {
   });
 
   const boardId = item.checklist.card.list.boardId;
-  const access = await assertBoardAccess(boardId, user.id);
+  const access = await assertBoardAccess(boardId, user);
   if (!access?.canEdit) return;
 
   await prisma.checklistItem.update({
@@ -545,7 +577,7 @@ export async function deleteChecklistItemAction(formData: FormData) {
   });
 
   const boardId = item.checklist.card.list.boardId;
-  const access = await assertBoardAccess(boardId, user.id);
+  const access = await assertBoardAccess(boardId, user);
   if (!access?.canEdit) return;
 
   await prisma.checklistItem.delete({ where: { id: itemId } });
@@ -569,7 +601,7 @@ export async function createLabelAction(formData: FormData) {
   }
 
   const user = await getCurrentUser();
-  const access = await assertBoardAccess(boardId, user.id);
+  const access = await assertBoardAccess(boardId, user);
   if (!access?.canEdit) return;
 
   await prisma.label.create({
@@ -586,7 +618,7 @@ export async function deleteLabelAction(formData: FormData) {
   const user = await getCurrentUser();
 
   const label = await prisma.label.findUniqueOrThrow({ where: { id: labelId } });
-  const access = await assertBoardAccess(label.boardId, user.id);
+  const access = await assertBoardAccess(label.boardId, user);
   if (!access?.canEdit) return;
 
   await prisma.label.delete({ where: { id: labelId } });
@@ -610,7 +642,7 @@ export async function createPriorityAction(formData: FormData) {
   }
 
   const user = await getCurrentUser();
-  const access = await assertBoardAccess(boardId, user.id);
+  const access = await assertBoardAccess(boardId, user);
   if (!access?.canEdit) return;
 
   const lastPriority = await prisma.priority.findFirst({
@@ -648,7 +680,7 @@ export async function updatePriorityAction(formData: FormData) {
   const user = await getCurrentUser();
 
   const priority = await prisma.priority.findUniqueOrThrow({ where: { id: priorityId } });
-  const access = await assertBoardAccess(priority.boardId, user.id);
+  const access = await assertBoardAccess(priority.boardId, user);
   if (!access?.canEdit) return;
 
   await prisma.priority.update({
@@ -666,7 +698,7 @@ export async function deletePriorityAction(formData: FormData) {
   const user = await getCurrentUser();
 
   const priority = await prisma.priority.findUniqueOrThrow({ where: { id: priorityId } });
-  const access = await assertBoardAccess(priority.boardId, user.id);
+  const access = await assertBoardAccess(priority.boardId, user);
   if (!access?.canEdit) return;
 
   await prisma.priority.delete({ where: { id: priorityId } });
@@ -688,7 +720,7 @@ export async function toggleCardLabelAction(formData: FormData) {
   });
 
   const boardId = card.list.boardId;
-  const access = await assertBoardAccess(boardId, user.id);
+  const access = await assertBoardAccess(boardId, user);
   if (!access?.canEdit) return;
 
   const existing = await prisma.cardLabel.findUnique({
@@ -700,6 +732,7 @@ export async function toggleCardLabelAction(formData: FormData) {
       where: { cardId_labelId: { cardId, labelId } },
     });
   } else {
+    if (!(await cardRefsInBoard(prisma, access, { labelIds: [labelId] }))) return;
     await prisma.cardLabel.create({ data: { cardId, labelId } });
   }
 
@@ -720,7 +753,7 @@ export async function toggleCardAssigneeAction(formData: FormData) {
   });
 
   const boardId = card.list.boardId;
-  const access = await assertBoardAccess(boardId, user.id);
+  const access = await assertBoardAccess(boardId, user);
   if (!access?.canEdit) return;
 
   const existing = await prisma.cardAssignee.findUnique({
@@ -732,6 +765,7 @@ export async function toggleCardAssigneeAction(formData: FormData) {
       where: { cardId_userId: { cardId, userId: assigneeId } },
     });
   } else {
+    if (!(await cardRefsInBoard(prisma, access, { assigneeIds: [assigneeId] }))) return;
     await prisma.cardAssignee.create({ data: { cardId, userId: assigneeId } });
   }
 
@@ -829,13 +863,13 @@ export async function regenerateShareLinkAction(formData: FormData) {
 }
 
 /** การ์ด + boardId + สิทธิ์ ในการเรียกครั้งเดียว — ทุก action ของไฟล์แนบต้องผ่านด่านนี้ */
-async function cardEditAccess(cardId: string, userId: string) {
+async function cardEditAccess(cardId: string, user: { id: string; email: string }) {
   const card = await prisma.card.findUniqueOrThrow({
     where: { id: cardId },
     include: { list: { select: { boardId: true } } },
   });
 
-  const access = await assertBoardAccess(card.list.boardId, userId);
+  const access = await assertBoardAccess(card.list.boardId, user);
   if (!access?.canEdit) return null;
 
   return { boardId: card.list.boardId };
@@ -851,7 +885,7 @@ export async function addLinkAttachmentAction(formData: FormData) {
   if (!url) return;
 
   const user = await getCurrentUser();
-  const context = await cardEditAccess(cardId, user.id);
+  const context = await cardEditAccess(cardId, user);
   if (!context) return;
 
   const name = optionalText(formData.get("name")) ?? attachmentNameFromUrl(url);
@@ -881,7 +915,7 @@ export async function uploadAttachmentAction(formData: FormData): Promise<
   let blob: Awaited<ReturnType<typeof put>> | undefined;
   let saved = false;
   try {
-    const context = await cardEditAccess(cardId, user.id);
+    const context = await cardEditAccess(cardId, user);
     if (!context) return { ok: false, error: "ไม่มีสิทธิ์แก้ไขการ์ดนี้" };
     const existing = await prisma.attachment.findUnique({ where: { id: attachmentId as string } });
     if (existing) {
@@ -924,7 +958,7 @@ export async function deleteAttachmentAction(formData: FormData) {
     where: { id: attachmentId },
   });
 
-  const context = await cardEditAccess(attachment.cardId, user.id);
+  const context = await cardEditAccess(attachment.cardId, user);
   if (!context) return;
 
   if (attachment.blobPathname && process.env.BLOB_READ_WRITE_TOKEN) {
@@ -952,7 +986,7 @@ export async function addCommentAction(formData: FormData) {
   });
 
   const boardId = card.list.boardId;
-  const access = await assertBoardAccess(boardId, user.id);
+  const access = await assertBoardAccess(boardId, user);
   if (!access?.canEdit) return;
 
   await prisma.comment.create({
@@ -987,42 +1021,126 @@ export async function setDoneListAction(formData: FormData) {
   const user = await getCurrentUser();
 
   const list = await prisma.list.findUniqueOrThrow({ where: { id: listId } });
-  const access = await assertBoardAccess(list.boardId, user.id);
+  const access = await assertBoardAccess(list.boardId, user);
   if (!access?.canEdit) return;
 
-  const nextValue = !list.isDoneList;
-
   await prisma.$transaction(async (tx) => {
-    // ย้ายธงไปคอลัมน์อื่น (หรือยกเลิก) ต้องคืนการ์ดในคอลัมน์เดิมเป็น "กำลังทำ" ด้วย
-    // ไม่งั้นการ์ดจะค้างสถานะเสร็จอยู่ในคอลัมน์ที่ไม่ใช่คอลัมน์เสร็จสิ้นแล้ว
-    const previousDoneLists = await tx.list.findMany({
-      where: { boardId: list.boardId, isDoneList: true },
-      select: { id: true },
-    });
-
-    if (previousDoneLists.length > 0) {
-      await tx.list.updateMany({
-        where: { boardId: list.boardId },
-        data: { isDoneList: false },
-      });
-      await tx.card.updateMany({
-        where: {
-          listId: { in: previousDoneLists.map((previous) => previous.id) },
-          isCompleted: true,
-        },
-        data: { isCompleted: false },
-      });
-    }
-
-    if (nextValue) {
-      await tx.list.update({ where: { id: listId }, data: { isDoneList: true } });
-      await tx.card.updateMany({
-        where: { listId, isCompleted: false },
-        data: { isCompleted: true },
-      });
+    if (list.isDoneList) {
+      await clearDoneList(tx, list.boardId);
+    } else {
+      await flagDoneList(tx, list.boardId, listId);
     }
   });
 
   revalidatePath(`/board/${list.boardId}`);
   revalidatePath("/");
+}
+
+/**
+ * ตั้ง/ยกเลิกคอลัมน์ "กำลังตรวจสอบ" — บอร์ดละ 1 คอลัมน์ และต้องไม่ใช่คอลัมน์เสร็จสิ้น
+ * บอร์ดที่มีคอลัมน์นี้ การ์ดจะเข้าคอลัมน์เสร็จสิ้นได้ก็ต่อเมื่ออาจารย์อนุมัติ (ดู needsTeacherApproval)
+ */
+export async function setReviewListAction(formData: FormData) {
+  const listId = formData.get("listId");
+  if (typeof listId !== "string") return;
+
+  const user = await getCurrentUser();
+
+  const list = await prisma.list.findUniqueOrThrow({ where: { id: listId } });
+  const access = await assertBoardAccess(list.boardId, user);
+  if (!access?.canEdit) return;
+  if (list.isDoneList) return;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.list.updateMany({
+      where: { boardId: list.boardId, isReviewList: true },
+      data: { isReviewList: false },
+    });
+    if (!list.isReviewList) {
+      await tx.list.update({ where: { id: listId }, data: { isReviewList: true } });
+    }
+  });
+
+  revalidatePath(`/board/${list.boardId}`);
+  revalidatePath("/review");
+}
+
+/**
+ * ย้ายธงคอลัมน์เสร็จสิ้นไปคอลัมน์นี้ แล้วดันมันไปขวาสุด
+ * การ์ดที่อยู่ในคอลัมน์นั้นอยู่แล้วถือว่าเสร็จทันที แต่ไม่ย้อนให้แต้ม เพราะไม่รู้ว่าใครเป็นคนทำ
+ * และไม่เซ็ต completedAt ด้วย ไม่งั้นลากออกแล้วการ์ดจะขึ้นชิป "ได้แต้มแล้ว" ทั้งที่ไม่เคยได้
+ */
+async function flagDoneList(tx: Prisma.TransactionClient, boardId: string, listId: string) {
+  await clearDoneList(tx, boardId);
+
+  const last = await tx.list.findFirst({
+    where: { boardId, id: { not: listId } },
+    orderBy: { position: "desc" },
+    select: { position: true },
+  });
+
+  await tx.list.update({
+    where: { id: listId },
+    // คอลัมน์เดียวเป็นทั้งคอลัมน์ตรวจและคอลัมน์เสร็จสิ้นไม่ได้
+    data: {
+      isDoneList: true,
+      isReviewList: false,
+      position: positionBetween(last?.position, undefined),
+    },
+  });
+  await tx.card.updateMany({
+    where: { listId, isCompleted: false },
+    data: { isCompleted: true },
+  });
+}
+
+/**
+ * ยกเลิกคอลัมน์เสร็จสิ้นเดิม — ต้องคืนการ์ดในคอลัมน์นั้นเป็น "กำลังทำ" ด้วย
+ * ไม่งั้นการ์ดจะค้างสถานะเสร็จอยู่ในคอลัมน์ที่ไม่ใช่คอลัมน์เสร็จสิ้นแล้ว
+ */
+async function clearDoneList(tx: Prisma.TransactionClient, boardId: string) {
+  const previousDoneLists = await tx.list.findMany({
+    where: { boardId, isDoneList: true },
+    select: { id: true },
+  });
+  if (previousDoneLists.length === 0) return;
+
+  await tx.list.updateMany({
+    where: { boardId },
+    data: { isDoneList: false },
+  });
+  await tx.card.updateMany({
+    where: {
+      listId: { in: previousDoneLists.map((previous) => previous.id) },
+      isCompleted: true,
+    },
+    data: { isCompleted: false },
+  });
+}
+
+const REVIEW_REQUIRED_ERROR = "บอร์ดนี้ต้องให้อาจารย์ตรวจก่อน การ์ดถึงจะเข้าคอลัมน์เสร็จสิ้นได้";
+
+/**
+ * บอร์ดที่มีคอลัมน์ตรวจ: มีแค่อาจารย์ที่พาการ์ด "เข้า" คอลัมน์เสร็จสิ้นได้ (ผ่านหน้าตรวจงาน)
+ * จัดลำดับภายในคอลัมน์เสร็จสิ้นเองยังได้ และบอร์ดที่ไม่มีคอลัมน์ตรวจทำงานแบบเดิม
+ */
+function needsTeacherApproval(
+  access: BoardAccess,
+  boardLists: { isReviewList: boolean }[],
+  targetList: { isDoneList: boolean },
+  listChanged: boolean
+) {
+  if (!targetList.isDoneList || !listChanged || access.canReview) return false;
+  return boardLists.some((list) => list.isReviewList);
+}
+
+/** เข้าคอลัมน์ตรวจ = ส่งงาน — จำไว้ว่าใครส่ง แต้มตอนอาจารย์อนุมัติจะไปที่คนนี้ */
+function submissionFields(
+  targetList: { isReviewList: boolean },
+  listChanged: boolean,
+  userId: string
+) {
+  return targetList.isReviewList && listChanged
+    ? { submittedById: userId, submittedAt: new Date() }
+    : {};
 }

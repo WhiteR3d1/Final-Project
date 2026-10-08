@@ -58,6 +58,13 @@ cp .env.example .env
   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
   ```
 
+ค่าเสริม (ไม่ใส่ก็รันได้):
+
+- `TEACHER_EMAILS` — อีเมลของอาจารย์ คั่นด้วย comma เช่น `TEACHER_EMAILS=teacher@kanban.dev`
+  อาจารย์ไม่ต้องถูกเชิญก็ดูได้ทุกบอร์ด และมีเมนู "ตรวจงาน" (`/review`) ไว้ให้คะแนน/อนุมัติการ์ดในคอลัมน์ "กำลังตรวจสอบ"
+  (seed สร้างบัญชี `teacher@kanban.dev` / `teacherpass123` ไว้ให้ทดสอบ)
+- `BLOB_READ_WRITE_TOKEN` — โทเคนของ Vercel Blob สำหรับอัปโหลดไฟล์แนบ (ไม่ใส่ก็ยังแนบลิงก์ได้)
+
 ### 3. สร้างตารางในฐานข้อมูล + สร้าง Prisma Client
 
 ```bash

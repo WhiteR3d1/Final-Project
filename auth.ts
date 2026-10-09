@@ -1,12 +1,19 @@
-import NextAuth from "next-auth";
+import NextAuth, { CredentialsSignin } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import * as z from "zod";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { authConfig } from "@/auth.config";
+import { isAdminEmail } from "@/lib/roles";
+
+/** บัญชีถูกระงับ — app/actions/auth.ts จับ code นี้เพื่อบอกผู้ใช้ตรง ๆ แทนข้อความกลาง */
+export class AccountDisabled extends CredentialsSignin {
+  code = "disabled";
+}
 
 const CredentialsSchema = z.object({
-  email: z.email(),
+  // อีเมลเก็บเป็นตัวพิมพ์เล็กเสมอ (ดู schema.prisma) จึงต้องแปลงก่อนค้น
+  email: z.email().trim().toLowerCase(),
   password: z.string().min(1),
 });
 
@@ -36,6 +43,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const passwordMatches = await bcrypt.compare(password, user.passwordHash);
         if (!passwordMatches) {
           return null;
+        }
+
+        // เช็คหลังรหัสถูกเท่านั้น — ถ้าเช็คก่อน คนเดารหัสจะรู้ว่าบัญชีนี้มีอยู่และถูกระงับ
+        if (user.disabledAt && !isAdminEmail(user.email)) {
+          throw new AccountDisabled();
         }
 
         return {

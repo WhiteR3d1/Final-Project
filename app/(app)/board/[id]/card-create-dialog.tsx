@@ -1,7 +1,8 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import type { Label, Priority, User } from "@/app/generated/prisma/client";
+import type { Label, Priority } from "@/app/generated/prisma/client";
+import type { PublicUser } from "./types";
 import { Modal } from "@/app/components/ui/modal";
 import { IconPlus, IconTrash } from "@/app/components/ui/icons";
 import { sanitizeAttachmentUrl } from "@/lib/attachments";
@@ -15,7 +16,7 @@ const buttonClass = "border-line text-muted hover:text-text hover:bg-panel-2 rou
 type DraftChecklist = { id: string; title: string; items: { id: string; content: string; isCompleted: boolean }[] };
 
 export function CardCreateDialog({ listId, listName, priorities, labels, members, onClose }: {
-  listId: string; listName: string; priorities: Priority[]; labels: Label[]; members: User[]; onClose: () => void;
+  listId: string; listName: string; priorities: Priority[]; labels: Label[]; members: PublicUser[]; onClose: () => void;
 }) {
   const [priorityId, setPriorityId] = useState("");
   const [labelIds, setLabelIds] = useState<string[]>([]);

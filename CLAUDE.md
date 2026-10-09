@@ -60,18 +60,29 @@ app/
   api/auth/[...nextauth]/     # route handler ของ NextAuth (re-export handlers เฉย ๆ)
   actions/
     auth.ts                   # server actions: signup / login / logout
-    board.ts                  # server actions: สร้าง/แก้ไขบอร์ด (แก้ได้เฉพาะเจ้าของ)
+    board.ts                  # server actions: สร้าง/แก้ไข/ลบบอร์ด (แก้/ลบได้เฉพาะเจ้าของ)
+  suspended/page.tsx          # ปลายทางของบัญชีที่ถูกระงับ — อยู่นอก (app) และใช้ getSessionUser() กันวนลูป
 
   (app)/                      # route group ของหน้าที่ต้องล็อกอิน — ไม่เปลี่ยน URL
     layout.tsx                # โครงแอป: Sidebar + Topbar + <main>
     page.tsx                  # Dashboard                    → "/"
     search/page.tsx           # ผลการค้นหาข้ามบอร์ด (?q=)     → "/search"
     calendar/page.tsx         # ปฏิทินกำหนดส่ง (?m=, ?board=) → "/calendar"
+    account/                  # บัญชีของฉัน: เปลี่ยนรหัสผ่าน (รู้รหัสเดิม) → "/account"
+    admin/                    # จัดการผู้ใช้ (แอดมินเท่านั้น): role / ระงับ / ตั้งรหัสใหม่ → "/admin"
+    courses/                  # รายวิชาของอาจารย์ → "/courses", "/courses/[id]"
+      actions.ts              # สร้าง/ลบวิชา, สุ่มรหัสใหม่, ถอนบอร์ดออก, exportCourseScoresAction (CSV)
+      [id]/csv-download-button.tsx # client — รับ string จาก action แล้วสร้างไฟล์ดาวน์โหลดเอง
+    my-reviews/               # ผลตรวจของงานฉัน + เคลียร์ตัวเลขแจ้งเตือน → "/my-reviews"
+    review/                   # หน้าตรวจงานของอาจารย์ (?tab=pending|done, ?course=, ?board=) → "/review"
+      page.tsx                # การ์ดในคอลัมน์ตรวจของบอร์ดในวิชาตัวเอง — ไม่ใช่อาจารย์ = notFound()
+      actions.ts              # reviewCardAction: อนุมัติ (คะแนน + ย้ายเข้าเสร็จสิ้น) / ส่งกลับแก้ไข
+      review-form.tsx         # client — ช่องคะแนน/ความเห็น (controlled) + ปุ่มสองปุ่มแยกด้วย name="intent"
     board/[id]/
       page.tsx                # หน้าบอร์ด (server component ดึงข้อมูลเอง)
       actions.ts              # server actions ของ list/card/label/priority/invite/
                               # ไฟล์แนบ/ลิงก์แชร์ ทั้งหมด
-      types.ts                # ListWithCards / CardWithRelations ใช้ร่วมกันทั้งโฟลเดอร์
+      types.ts                # ListWithCards / CardWithRelations / publicUserSelect / PublicUser
       kanban-board.tsx        # client — drag & drop (@dnd-kit) + ฟิลเตอร์ + คุมว่าเปิดการ์ดไหน
       board-card.tsx          # client — การ์ดแบบกระชับบนคอลัมน์
       card-detail-dialog.tsx  # client — modal รายละเอียดการ์ด (แก้ทุกอย่างที่นี่)
@@ -85,6 +96,7 @@ app/
       board-filters.tsx       # client — แถบฟิลเตอร์ (กรองฝั่ง client ล้วน)
       list-menu.tsx           # client — เมนู ⋯ ของคอลัมน์
       card-move-buttons.tsx   # ปุ่มย้ายการ์ด (fallback ของการลาก อยู่ใน modal)
+      card-review-result.tsx  # ผลตรวจของอาจารย์ (ReviewChip บนการ์ด / CardReviewResult ใน modal และหน้าตรวจงาน)
       priority-manager.tsx    # จัดการ priority ของบอร์ด (อยู่ใน modal ตั้งค่า)
 
   components/
@@ -99,8 +111,15 @@ app/
 
 lib/
   prisma.ts                   # Prisma Client singleton (กัน hot-reload สร้างซ้ำ)
-  dal.ts                      # verifySession() / getCurrentUser() — ประตูเดียวสู่ตัวตนผู้ใช้
-  board-access.ts             # assertBoardAccess() — เช็คสิทธิ์ owner/member ของบอร์ด
+  dal.ts                      # verifySession() / getCurrentUser() (+ role จริง, ด่านบัญชีถูกระงับ)
+  board-access.ts             # assertBoardAccess() — เช็คสิทธิ์ owner/member/อาจารย์ ของบอร์ด
+  roles.ts                    # effectiveRole() / canTeach() / canManageUsers() + ADMIN_EMAILS (มี unit test)
+  notifications.ts            # ตัวเลขบน sidebar (งานรอตรวจ / ผลตรวจที่ยังไม่อ่าน) ห่อ cache()
+  password.ts                 # newPasswordSchema — กติการหัสผ่านเดียวกันทั้งสมัคร/เปลี่ยน/แอดมินตั้ง
+  join-code.ts                # สุ่มรหัสเข้าร่วมรายวิชา (ฟังก์ชันบริสุทธิ์ → มี unit test)
+  csv.ts                      # toCsv() + BOM + กัน formula injection (ฟังก์ชันบริสุทธิ์ → มี unit test)
+  card-completion.ts          # syncCardCompletion() — ทางเข้าเดียวของกติกา "เสร็จ" + แต้ม
+  drag.ts                     # ตำแหน่งตอนลาก/แทรกคอลัมน์ + isDoneListName() (ฟังก์ชันบริสุทธิ์ → มี unit test)
   boards.ts                   # accessibleBoardWhere() + getUserBoards() + boardColor()
   dashboard.ts                # ตัวเลข/กราฟของ dashboard (query อ่านอย่างเดียว)
   due.ts                      # เทียบวันกำหนดส่งด้วย "คีย์วันที่" ตามเวลาไทย + สีของแต่ละกลุ่ม
@@ -114,7 +133,8 @@ types/
 prisma/
   schema.prisma               # นิยามโมเดลทั้งหมด
   migrations/                 # ประวัติ migration
-  seed.ts                     # ข้อมูลตัวอย่าง (demo@kanban.dev / demopass123)
+  seed.ts                     # ข้อมูลตัวอย่าง: นักศึกษา demo@ / อาจารย์ teacher@ / แอดมิน admin@kanban.dev
+                              # + รายวิชา "วิชาตัวอย่าง" รหัส KANBAN ที่ผูกบอร์ด Study Plan
 ```
 
 ---
@@ -130,6 +150,10 @@ prisma/
    ห้ามเรียก `auth()` ตรง ๆ และห้ามอ่าน cookie เองจากที่อื่น
    ทั้งสองฟังก์ชันห่อด้วย React `cache()` เรียกซ้ำใน request เดียวไม่ query ซ้ำ
    และจะ `redirect("/login")` ให้เองถ้าไม่มี session
+   - `getCurrentUser()` คืน `role` ที่คำนวณแล้ว (รวม `ADMIN_EMAILS`) — **ห้ามอ่าน `user.role` จาก DB ตรง ๆ
+     และห้ามเก็บ role ใน JWT** (เปลี่ยน role แล้วจะค้างได้ถึง 7 วัน)
+   - บัญชีที่ถูกระงับ (`disabledAt`) ถูก `redirect("/suspended")` ที่นี่ หน้านั้นต้องใช้ `getSessionUser()`
+     และอยู่นอก `(app)` เพราะ JWT ยังไม่หมดอายุ proxy ยังมองว่าล็อกอินอยู่ — ใช้ `getCurrentUser()` = วนลูป
 2. **`auth.config.ts` ห้าม import Prisma หรือ bcrypt** เพราะ `proxy.ts` ใช้ไฟล์นี้
    ตัว provider ที่แตะ DB ต้องอยู่ใน `auth.ts` เท่านั้น
 3. **ใช้ JWT strategy ไม่ใช่ database session** — Credentials provider ของ NextAuth
@@ -141,6 +165,10 @@ prisma/
    และใช้ `redirect: false` เพื่อไม่ให้ NextAuth redirect ทับจน `useActionState` เสีย state
 6. ข้อความตอนล็อกอินพลาดต้องเป็น "อีเมลหรือรหัสผ่านไม่ถูกต้อง" เสมอ
    **ห้ามแยกว่าอีเมลผิดหรือรหัสผ่านผิด** เพราะเปิดช่องให้เดาว่ามีอีเมลนี้อยู่ในระบบ
+   ข้อยกเว้นเดียว: บัญชีถูกระงับได้ "บัญชีนี้ถูกระงับ" — `authorize()` โยน `AccountDisabled`
+   **หลังรหัสผ่านถูกแล้วเท่านั้น** คนเดารหัสจึงไม่รู้อะไรเพิ่ม
+7. **อีเมลเก็บเป็นตัวพิมพ์เล็กเสมอ** (schema สมัคร/ล็อกอินและ `authorize()` แปลงก่อน) ไม่งั้นคนสมัคร
+   `ADMIN@x` จะได้บัญชีใหม่ที่ `isAdminEmail()` (ซึ่งไม่สนตัวพิมพ์) นับเป็นแอดมิน
 
 ### การกันสิทธิ์ (authorization) — ทำ 2 ชั้น
 
@@ -150,7 +178,7 @@ prisma/
 - **ชั้นใน (ของจริง)** — ทุก Server Action และทุก page ต้องเช็คเองเสมอ:
   ```ts
   const user = await getCurrentUser();                       // ต้องล็อกอิน
-  const access = await assertBoardAccess(boardId, user.id);  // ต้องเป็น owner หรือ member
+  const access = await assertBoardAccess(boardId, user);     // owner / member / อาจารย์ของวิชา
   if (!access?.canEdit) return;   // action ที่แก้ข้อมูล
   if (!access) notFound();        // page ที่แค่อ่าน (viewer เข้าได้)
   ```
@@ -158,14 +186,31 @@ prisma/
 
 ### สิทธิ์ในบอร์ด (`BoardRole`)
 
-`assertBoardAccess()` คืน `{ id, ownerId, role, isOwner, canEdit }` มาให้เลย
-**ห้ามให้ action ไปตีความ role เอง** ใช้ `canEdit` ที่มันคำนวณมาแล้ว
+`assertBoardAccess(boardId, user)` รับ `{ id, role }` (ส่ง `user` จาก `getCurrentUser()` ทั้งก้อนได้เลย)
+แล้วคืน `{ id, ownerId, role, isOwner, canEdit, canReview, courseId, requiresApproval }` มาให้
+**ห้ามให้ action ไปตีความ role เอง** ใช้ `canEdit` / `canReview` / `requiresApproval` ที่มันคำนวณมาแล้ว
 
-| | ดูบอร์ด | แก้การ์ด/คอลัมน์/ป้าย/priority | คอมเมนต์ | เชิญสมาชิก |
-|---|---|---|---|---|
-| OWNER (`Board.ownerId`) | ✓ | ✓ | ✓ | ✓ |
-| EDITOR (`BoardMember.role`) | ✓ | ✓ | ✓ | ✗ |
-| VIEWER (`BoardMember.role`) | ✓ | ✗ | ✗ | ✗ |
+| | ดูบอร์ด | แก้การ์ด/คอลัมน์/ป้าย/priority | คอมเมนต์ | เชิญสมาชิก | ตรวจงาน/ให้คะแนน |
+|---|---|---|---|---|---|
+| OWNER (`Board.ownerId`) | ✓ | ✓ | ✓ | ✓ | ✗ |
+| EDITOR (`BoardMember.role`) | ✓ | ✓ | ✓ | ✗ | ✗ |
+| VIEWER (`BoardMember.role`) | ✓ | ✗ | ✗ | ✗ | ✗ |
+| TEACHER (อาจารย์เจ้าของรายวิชาที่บอร์ดผูกอยู่) | ✓ เฉพาะบอร์ดในวิชาตัวเอง | ✗ | ✗ | ✗ | ✓ |
+
+**role ของผู้ใช้ทั้งระบบ (`User.role`)** — USER (นักศึกษา) / TEACHER / ADMIN ตั้งจากหน้า `/admin`
+อีเมลใน env `ADMIN_EMAILS` เป็น ADMIN เสมอ (ทางเข้าของแอดมินคนแรก และกันแอดมินล็อกตัวเองออก)
+`canTeach(role)` = TEACHER หรือ ADMIN, `canManageUsers(role)` = ADMIN (`lib/roles.ts`)
+
+- **อาจารย์เห็นเฉพาะบอร์ดที่ผูกกับรายวิชาที่ตัวเองเป็นเจ้าของ** (`board.course.teacherId`) ไม่ต้องถูกเชิญ
+  ได้ `canEdit: false` + `canReview: true` อาจารย์ที่เป็นสมาชิกอยู่แล้วใช้ role เดิม แค่ได้ `canReview` เพิ่ม
+  บอร์ดที่ไม่ผูกวิชาเป็นบอร์ดส่วนตัว ไม่มีอาจารย์คนไหนเห็น (แอดมินก็ไม่เห็นวิชาของอาจารย์คนอื่น)
+  `accessibleBoardWhere()` ไม่นับอาจารย์ — dashboard/ค้นหา/ปฏิทินของอาจารย์ยังเป็นของตัวเอง
+- **แอดมิน** (`app/(app)/admin/actions.ts` ผ่าน `editableTarget()`): แก้ตัวเองไม่ได้ แก้แอดมินจาก env ไม่ได้
+  และลดอาจารย์ที่ยังเป็นเจ้าของรายวิชาเป็นนักศึกษา/ระงับไม่ได้ (บอร์ดในวิชาจะค้างไม่มีใครอนุมัติ)
+- **รายวิชา**: เจ้าของบอร์ดผูกด้วยรหัสเข้าร่วม (`linkBoardToCourseAction`) ได้ครั้งเดียว
+  การถอนออกเป็นสิทธิ์ของอาจารย์ (`unlinkBoardAction`) — ไม่งั้นนักศึกษาถอนแล้วลบบอร์ดเพื่อลบคะแนนได้
+- **จัดการสมาชิก** (`setMemberRoleAction` / `removeMemberAction` เจ้าของเท่านั้น, `leaveBoardAction` สมาชิกเอง)
+  เอาออกแล้วต้องลบ `CardAssignee` ของคนนั้นในบอร์ดด้วย (`removeMembership()`)
 
 - **action ที่แก้ข้อมูลต้องเช็ค `access.canEdit` ไม่ใช่แค่ `access` ไม่เป็น null**
   เขียนใหม่แล้วลืมบรรทัดนี้ = viewer แก้ข้อมูลได้
@@ -184,6 +229,9 @@ prisma/
   เปลี่ยนค่านี้ = ผู้ใช้ทุกคนหลุด login
 - `BLOB_READ_WRITE_TOKEN` — โทเคนของ Vercel Blob สำหรับอัปโหลดไฟล์แนบ
   ไม่ใส่ก็ยังแนบ "ลิงก์" ได้ตามปกติ การอัปโหลดไฟล์จะคืน error ให้แสดงในรายการไฟล์
+- `ADMIN_EMAILS` — อีเมลแอดมินคั่นด้วย comma (ไม่สนตัวพิมพ์) เป็นแอดมินเสมอ แก้จากหน้าเว็บไม่ได้
+  **สร้างบัญชีของอีเมลนี้ไว้ก่อน** (seed สร้าง `admin@kanban.dev` ให้) ไม่งั้นใครสมัครอีเมลนี้ก่อนได้เป็นแอดมิน
+  อาจารย์ไม่ได้มาจาก env แล้ว (เลิกใช้ `TEACHER_EMAILS`) — ตั้ง role ที่หน้า `/admin`
 
 ---
 
@@ -192,7 +240,7 @@ prisma/
 `User` → `Board` (owner) → `List` → `Card`
 เสริมด้วย `BoardMember` (แชร์บอร์ด), `BoardInvite` (เชิญด้วย token), `BoardShareLink` (ลิงก์ทั่วไป),
 `Label`, `Priority`, `Checklist`/`ChecklistItem`, `Comment`, `Attachment`, `Activity`,
-`PointEvent` (ledger แต้ม)
+`PointEvent` (ledger แต้ม), `CardReview` (ผลตรวจของอาจารย์), `Course` (รายวิชา)
 
 จุดที่ต้องรู้:
 
@@ -201,8 +249,27 @@ prisma/
 - **`position` เป็น `Float` ไม่ใช่ `Int`** — เวลาลากแทรกกลางให้คำนวณค่าระหว่างเพื่อนบ้าน
   จะได้ไม่ต้องเขียนลำดับใหม่ทั้งคอลัมน์
 - **`Priority` ตั้งเองต่อบอร์ด** (ชื่อ+สีกำหนดได้) การ์ดผูกได้ทีละ 1 priority
-- **`List.isDoneList`** — คอลัมน์ "เสร็จสิ้น" ของบอร์ด มีได้บอร์ดละ 1 คอลัมน์
-  (`setDoneListAction` ล้างธงเดิมก่อนตั้งใหม่เสมอ)
+- **`List.isDoneList`** — คอลัมน์ "เสร็จสิ้น" ของบอร์ด มีได้บอร์ดละ 1 คอลัมน์ และ**อยู่ขวาสุดเสมอ**
+  (`flagDoneList()` ล้างธงเดิมแล้วดันคอลัมน์ไปท้ายสุด, `reorderListAction` ห้ามเลยมันไป,
+  ฝั่ง client ปิดการลากคอลัมน์นี้และใช้ `clampBeforeDone()`)
+  บอร์ดที่ยังไม่มีคอลัมน์เสร็จสิ้น ถ้าสร้าง/เปลี่ยนชื่อคอลัมน์เป็นชื่อใน `DONE_LIST_NAMES`
+  (done/finish/เสร็จสิ้น ฯลฯ ตรงทั้งชื่อ) จะถูกตั้งธงให้อัตโนมัติ — รายชื่อนี้ต้องตรงกับ SQL ใน
+  migration `review_workflow`
+- **`List.isReviewList`** — คอลัมน์ "กำลังตรวจสอบ" บอร์ดละ 1 คอลัมน์ และเป็นคอลัมน์เดียวกับ Done ไม่ได้
+  **บอร์ดที่ผูกรายวิชาและมีคอลัมน์นี้ (`access.requiresApproval`) การ์ดจะ "เข้า" คอลัมน์เสร็จสิ้นได้ก็ต่อเมื่อ
+  `canReview`** (`needsTeacherApproval()` ใน `board/[id]/actions.ts`) ต้องให้อาจารย์อนุมัติที่ `/review`
+  บอร์ดส่วนตัว (ไม่ผูกวิชา) ลากเข้าได้เองแม้มีคอลัมน์ตรวจ — ไม่มีอาจารย์ บังคับแล้วการ์ดจะค้างตลอดไป
+  บอร์ดใหม่ได้ 4 คอลัมน์พร้อมธงทั้งสองตั้งแต่สร้าง และตอนผูกวิชาจะสร้างคอลัมน์ที่ขาดให้
+- **`Board.courseId`** — บอร์ดละ 1 วิชา (`onDelete: SetNull`) **บอร์ดในรายวิชา: ลบบอร์ดไม่ได้,
+  ลบการ์ดที่มีผลตรวจไม่ได้, ลบคอลัมน์ที่มีการ์ดแบบนั้นไม่ได้** (กันคะแนนหายจาก CSV ของอาจารย์)
+- **`PointEvent.boardId` เป็น nullable (`onDelete: SetNull`)** — ลบบอร์ดแล้วแต้มยังอยู่ ("ได้แล้วไม่ริบคืน")
+- **`User.reviewsSeenAt`** — ผลตรวจที่ `updatedAt` ใหม่กว่านี้ = แจ้งเตือนที่ยังไม่อ่าน (`lib/notifications.ts`)
+  หน้า `/my-reviews` ตั้งค่านี้เป็น **เวลาที่ server render หน้า** ไม่ใช่เวลาที่กดเปิด
+- **`Card.submittedById` / `submittedAt`** — ตั้งตอนการ์ด "เข้า" คอลัมน์ตรวจ (`submissionFields()`)
+  แต้มตอนอาจารย์อนุมัติไปที่คนนี้ (ไม่มี = `createdById`) และโบนัสทันกำหนดวัดจาก `submittedAt`
+  ไม่ใช่เวลาที่อาจารย์กด — ตรวจช้าแล้วนักศึกษาต้องไม่เสียโบนัส
+- **`CardReview`** — การ์ดละ 1 แถว (`cardId @unique`) ตรวจซ้ำ = upsert ทับ
+  `score` เป็น null ได้ (ส่งกลับแก้ไขไม่ต้องมีคะแนน) **คะแนนจากอาจารย์แยกจากแต้ม gamification**
 - **`List.color` / `List.description`** ผู้ใช้ตั้งเองต่อคอลัมน์ (nullable ทั้งคู่)
   คอลัมน์เก่าที่ยังไม่มีสีจะ fallback ไปใช้สีตามลำดับคอลัมน์ (`LIST_ACCENTS`)
 - **`Card.isCompleted` = สถานะตอนนี้ / `Card.completedAt` = เคยเสร็จหรือยัง**
@@ -228,9 +295,10 @@ prisma/
   **จึงไม่ต้องล็อกการ์ดที่เสร็จแล้ว** (ล็อกจะขัดกับธรรมชาติของ kanban)
   การ์ดที่เคยได้แต้มแล้วถูกลากออกจะขึ้นชิป "ได้แต้มแล้ว"
 - **แต้มได้แล้วไม่ริบคืน** ลากออกจากคอลัมน์เสร็จสิ้นไม่ลบ `PointEvent` และไม่ล้าง `completedAt`
-- ตรรกะทั้งหมดรวมอยู่ที่ `syncCardCompletion()` ใน `app/board/[id]/actions.ts`
-  ซึ่งถูกเรียกจาก `moveCardAction` กับ `reorderCardAction` — ถ้าจะเพิ่มทางเข้าใหม่
-  (เช่น ปุ่มติ๊กเสร็จ) ให้เรียกฟังก์ชันนี้ ห้ามเขียนกติกาแต้มซ้ำที่อื่น
+- ตรรกะทั้งหมดรวมอยู่ที่ `syncCardCompletion(tx, card, targetList, boardId, earner, onTimeAt?)`
+  ใน `lib/card-completion.ts` ซึ่งถูกเรียกจาก `moveCardAction`, `reorderCardAction` และ
+  `reviewCardAction` — ถ้าจะเพิ่มทางเข้าใหม่ (เช่น ปุ่มติ๊กเสร็จ) ให้เรียกฟังก์ชันนี้
+  ห้ามเขียนกติกาแต้มซ้ำที่อื่น มันรับ `tx` เพื่อให้การย้ายการ์ด + กิจกรรม + แต้ม อยู่ใน transaction เดียว
 - action ที่ให้แต้มต้อง `revalidatePath("/")` ด้วย ไม่งั้นแถบโปรไฟล์บน dashboard ไม่อัปเดต
 
 **นิยามของกลุ่มกำหนดส่งมีที่เดียวคือ `dueBucket()` ใน `lib/due.ts`**
@@ -315,13 +383,30 @@ prisma/
   `attachment-upload.tsx` ใช้ ID รายไฟล์ (ไม่ใช้ชื่อ) พร้อมภาพตัวอย่างและ error รายไฟล์
   เมื่ออัปโหลดบางใบล้มเหลวให้ลองใหม่โดยใช้ `cardId`/attachment ID เดิม ไม่สร้างการ์ดซ้ำ
   modal สร้างการ์ดใช้ `busy` กัน Esc/ปิด/กดซ้ำระหว่างบันทึก และยังคงค่าฟอร์มเมื่อผิดพลาด
-- คำสั่งของคอลัมน์ (เปลี่ยนชื่อ / ตั้งเป็นคอลัมน์เสร็จสิ้น / ลบ) อยู่ในเมนู ⋯ ที่ `list-menu.tsx`
+- คำสั่งของคอลัมน์ (แก้ไข / เพิ่มคอลัมน์ทางซ้าย-ขวา / ตั้งเป็นคอลัมน์เสร็จสิ้น / ตั้งเป็นคอลัมน์ตรวจสอบ / ลบ)
+  อยู่ในเมนู ⋯ ที่ `list-menu.tsx` — แทรกคอลัมน์ส่งแค่ `anchorListId` + `side` ไป
+  ตำแหน่งจริงคำนวณที่ `createListAction` ด้วย `insertListPosition()` ห้ามเชื่อตำแหน่งจาก client
+- **ข้อมูล User ที่ส่งเข้า client component ต้องใช้ `select: publicUserSelect` (`types.ts`) เสมอ
+  ห้าม `user: true` / `owner: true`** — props ถูก serialize ลงหน้าเว็บทั้งก้อน เคยทำ `passwordHash`
+  ของสมาชิกทุกคนหลุดไปให้ทุกคนที่เปิดบอร์ดเห็น (รวม viewer ที่เข้าทางลิงก์แชร์)
+  token ของลิงก์แชร์ก็ส่งให้เฉพาะเจ้าของ (`shareLink={access.isOwner ? … : null}`)
+- ลากการ์ดเข้าเสร็จสิ้นในบอร์ดที่มีคอลัมน์ตรวจ: client เช็คก่อน (ไม่ทำ optimistic update + `Toast tone="warn"`)
+  ถ้า action ยังคืน `{ error }` อยู่ (state เก่า) `kanban-board.tsx` ต้องย้อน `setLists(initialLists)` เอง
+  เพราะ action ที่ปฏิเสธไม่มี revalidate มาแก้ state ให้
 
 ---
 
 ## Convention ของโค้ด
 
 ### Server Actions
+
+- **React 19 รีเซ็ตฟอร์มหลัง action จบเสมอ** — ช่อง uncontrolled กลับเป็นค่า default ตอน mount
+  ฟอร์มที่ต้องคงค่าเมื่อ error ให้ใช้ controlled input (ดู `review-form.tsx`, `LinkCourseForm`)
+  และ dropdown ที่ auto-submit ต้องมี `key` ตามค่าที่บันทึก (ดู dropdown สิทธิ์สมาชิกใน `board-settings-dialog.tsx`)
+  ไม่งั้นบันทึกแล้วแต่หน้าจอเด้งกลับไปโชว์ค่าเดิม
+- ไฟล์ `"use server"` export ได้แค่ async function — schema ที่ใช้ร่วมกันวางไว้ใน `lib/` (เช่น `lib/password.ts`)
+- **ไฟล์ดาวน์โหลด (CSV) ทำผ่าน Server Action ที่คืน string** แล้ว client สร้าง Blob เอง
+  (`csv-download-button.tsx`) — ยังคงกติกา "ไม่มี API route นอกจากของ NextAuth"
 
 - ไฟล์ action ขึ้นต้นด้วย `"use server"` ตั้งชื่อลงท้ายด้วย `Action` (เช่น `createListAction`)
 - รับ `FormData` เมื่อผูกกับ `<form action={...}>` ตรง ๆ
@@ -360,9 +445,9 @@ npm run dev                  # dev server
 npm run build                # production build (เช็คว่า prerender ผ่านไหม)
 npm run lint                 # eslint
 npm test                     # unit test (Node test runner ผ่าน tsx ไม่มี framework เพิ่ม)
-npx prisma migrate dev       # สร้าง migration + generate client
+npx prisma migrate dev       # สร้าง migration (Prisma 7: รัน npx prisma generate ต่อด้วย)
 npx prisma studio            # เปิดดูข้อมูลในฐานข้อมูล
-npx tsx prisma/seed.ts       # ใส่ข้อมูลตัวอย่าง
+npx prisma db seed           # ใส่ข้อมูลตัวอย่าง (รัน prisma/seed.ts พร้อมโหลด .env)
 ```
 
 **หลังแก้โค้ดทุกครั้งให้รัน `npx tsc --noEmit` และ `npm run build`**
@@ -372,9 +457,21 @@ npx tsx prisma/seed.ts       # ใส่ข้อมูลตัวอย่า�
 
 - (แก้แล้ว) `kanban-board.tsx` เลิกใช้ `useEffect` sync props แล้ว เปลี่ยนไปเซ็ต state
   ระหว่าง render ตามแพตเทิร์นที่ React แนะนำ — `npm run lint` ตอนนี้ผ่านสะอาด ห้ามทำให้พังอีก
-- test ครอบเฉพาะฟังก์ชันบริสุทธิ์ (`lib/due.ts`, `lib/points.ts`) ยังไม่มี integration test
-  ที่แตะ DB หรือ Server Action — ตรรกะสิทธิ์ (`canEdit`) จึงยังต้องทดสอบด้วยมือ
+- test ครอบเฉพาะฟังก์ชันบริสุทธิ์ (`lib/due.ts`, `lib/points.ts`, `lib/drag.ts`, `lib/roles.ts`, `lib/csv.ts` ฯลฯ)
+  ยังไม่มี integration test ที่แตะ DB หรือ Server Action — ตรรกะสิทธิ์ (`canEdit`/`canReview`)
+  และด่านอาจารย์อนุมัติจึงยังต้องทดสอบด้วยมือ
+- `prisma/seed.ts` ไม่โหลด `.env` เอง ต้องรันผ่าน `npx prisma db seed` (`npx tsx prisma/seed.ts`
+  ตรง ๆ จะพังด้วย `DATABASE_URL is not set`)
+- นักศึกษายังลากการ์ดที่อาจารย์อนุมัติแล้ว "ออก" จากคอลัมน์เสร็จสิ้นได้ (ลากเข้าไม่ได้)
+  ผลตรวจยังค้างเป็น APPROVED — ยังไม่ได้ตัดสินใจว่าควรล็อกหรือไม่
 - ลบการ์ดที่เคยได้แต้มแล้วสร้างใหม่ = ได้แต้มอีกรอบ (cuid เปลี่ยน) — ช่องโหว่ที่ยอมรับได้
 - ตอนตั้งคอลัมน์เสร็จสิ้น การ์ดที่อยู่ในคอลัมน์นั้นอยู่แล้วจะถูกมาร์กว่าเสร็จ แต่ไม่ได้แต้มย้อนหลัง
   (ไม่รู้ว่าใครเป็นคนทำ) และ `prisma/seed.ts` ใช้ `update: {}` จึงไม่เติม `dueDate`
   ให้การ์ด seed ที่มีอยู่ก่อนแล้ว
+- **เปลี่ยน/ตั้งรหัสผ่านใหม่แล้ว session เดิมไม่หลุด** (JWT ล้วน ไม่มีตาราง session ให้ลบ)
+  การระงับบัญชีเป็นทางเดียวที่ตัดผู้ใช้ที่ล็อกอินค้างออกได้ทันที
+- **`prisma migrate dev` ผ่าน pooler ของ Neon (`-pooler` ใน host) อาจค้าง advisory lock** แล้ว migrate
+  ครั้งถัดไป timeout (P1002) — ให้รัน migrate ด้วย connection ตรง (เอา `-pooler` ออกจาก host ชั่วคราว)
+  ถ้าค้างแล้ว ปิด backend ที่ idle และถือ lock `72707369` อยู่ (ดู `pg_locks`)
+- dev server ที่เปิดค้างไว้ถือ Prisma Client ตัวเก่าไว้ใน `globalThis` (`lib/prisma.ts`) — แก้ schema แล้ว
+  ต้องรีสตาร์ต `npm run dev` ไม่งั้นฟิลด์ใหม่ (เช่น `role`) เป็น `undefined`

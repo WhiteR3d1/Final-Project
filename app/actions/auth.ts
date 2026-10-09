@@ -3,8 +3,10 @@
 import * as z from "zod";
 import { redirect } from "next/navigation";
 import { AuthError } from "next-auth";
+import { AccountDisabled } from "@/auth";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { newPasswordSchema } from "@/lib/password";
 import { signIn, signOut } from "@/auth";
 
 export type AuthFormState =
@@ -40,6 +42,8 @@ async function signInWithCredentials(
   nextPath: string
 ): Promise<AuthFormState> {
   const wrongCredentials = { message: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" };
+  // ข้อยกเว้นเดียวของกฎ "ห้ามแยกว่าผิดตรงไหน" — authorize() โยนอันนี้หลังรหัสถูกแล้วเท่านั้น
+  const accountDisabled = { message: "บัญชีนี้ถูกระงับ กรุณาติดต่อผู้ดูแลระบบ" };
   let resultUrl: string;
 
   try {
@@ -52,13 +56,20 @@ async function signInWithCredentials(
       redirectTo: "/",
     });
   } catch (error) {
+    if (error instanceof AccountDisabled) {
+      return accountDisabled;
+    }
     if (error instanceof AuthError) {
       return wrongCredentials;
     }
     throw error;
   }
 
-  if (new URL(resultUrl, "http://localhost").searchParams.has("error")) {
+  const result = new URL(resultUrl, "http://localhost").searchParams;
+  if (result.get("code") === "disabled") {
+    return accountDisabled;
+  }
+  if (result.has("error")) {
     return wrongCredentials;
   }
 
@@ -69,8 +80,8 @@ async function signInWithCredentials(
 
 const SignupFormSchema = z.object({
   name: z.string().min(2, { error: "ชื่ออย่างน้อย 2 ตัวอักษร" }).trim(),
-  email: z.email({ error: "อีเมลไม่ถูกต้อง" }).trim(),
-  password: z.string().min(8, { error: "รหัสผ่านอย่างน้อย 8 ตัวอักษร" }).trim(),
+  email: z.email({ error: "อีเมลไม่ถูกต้อง" }).trim().toLowerCase(),
+  password: newPasswordSchema,
 });
 
 export async function signup(
@@ -105,7 +116,7 @@ export async function signup(
 }
 
 const LoginFormSchema = z.object({
-  email: z.email({ error: "อีเมลไม่ถูกต้อง" }).trim(),
+  email: z.email({ error: "อีเมลไม่ถูกต้อง" }).trim().toLowerCase(),
   password: z.string().min(1, { error: "กรุณากรอกรหัสผ่าน" }),
 });
 

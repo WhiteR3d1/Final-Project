@@ -1,7 +1,8 @@
 "use client";
 
 import type { ReactNode } from "react";
-import type { Label, Priority, User } from "@/app/generated/prisma/client";
+import type { Label, Priority } from "@/app/generated/prisma/client";
+import type { PublicUser } from "./types";
 import { Avatar, AvatarStack, displayName } from "@/app/components/ui/avatar";
 import { SubmitButton } from "@/app/components/ui/buttons";
 import { IconCheck } from "@/app/components/ui/icons";
@@ -201,7 +202,7 @@ export function CardAssigneeSelect({
   onChange,
 }: {
   cardId?: string;
-  members: User[];
+  members: PublicUser[];
   selectedIds: string[];
   canEdit: boolean;
   onChange?: (value: string) => void;

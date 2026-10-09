@@ -12,21 +12,38 @@ datasource db {
   provider = "postgresql"
 }
 
+enum UserRole {
+  USER
+  TEACHER
+  ADMIN
+}
+
 model User {
-  id           String         @id @default(cuid())
-  email        String         @unique
-  name         String?
-  image        String?
-  passwordHash String?
-  createdAt    DateTime       @default(now())
-  ownedBoards  Board[]        @relation("BoardOwner")
-  memberships  BoardMember[]
-  cardsCreated Card[]         @relation("CardCreator")
-  assignments  CardAssignee[]
-  comments     Comment[]
-  activities   Activity[]
-  pointEvents  PointEvent[]
-  attachments  Attachment[]
+  id             String         @id @default(cuid())
+  // เก็บเป็นตัวพิมพ์เล็กเสมอ — ADMIN_EMAILS เทียบแบบไม่สนตัวพิมพ์ ถ้าเก็บปน
+  // คนสมัคร "ADMIN@x" จะได้บัญชีใหม่ที่ถูกนับเป็นแอดมิน
+  email          String         @unique
+  // role จริงต้องอ่านผ่าน getCurrentUser() เท่านั้น (อีเมลใน ADMIN_EMAILS เป็น ADMIN เสมอ)
+  role           UserRole       @default(USER)
+  // ไม่ null = ถูกระงับ ล็อกอินไม่ได้ และทุกหน้าพาไป /suspended
+  disabledAt     DateTime?
+  // เวลาที่เปิดหน้า "ผลตรวจ" ล่าสุด — ผลตรวจที่ใหม่กว่านี้นับเป็นแจ้งเตือนที่ยังไม่อ่าน
+  reviewsSeenAt  DateTime?
+  name           String?
+  image          String?
+  passwordHash   String?
+  createdAt      DateTime       @default(now())
+  ownedBoards    Board[]        @relation("BoardOwner")
+  memberships    BoardMember[]
+  cardsCreated   Card[]         @relation("CardCreator")
+  assignments    CardAssignee[]
+  comments       Comment[]
+  activities     Activity[]
+  pointEvents    PointEvent[]
+  attachments    Attachment[]
+  cardsSubmitted Card[]         @relation("CardSubmitter")
+  reviewsGiven   CardReview[]
+  coursesTaught  Course[]       @relation("CourseTeacher")
 }
 
 model Board {
@@ -35,6 +52,9 @@ model Board {
   description String?
   color       String?
   ownerId     String
+  // รายวิชาที่บอร์ดนี้ส่งงาน (บอร์ดละ 1 วิชา) — null = บอร์ดส่วนตัว อาจารย์มองไม่เห็น
+  courseId    String?
+  course      Course?  @relation(fields: [courseId], references: [id], onDelete: SetNull)
   owner       User     @relation("BoardOwner", fields: [ownerId], references: [id])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -105,37 +125,57 @@ model BoardShareLink {
   board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
 }
 
+// รายวิชาของอาจารย์ — นักศึกษาผูกบอร์ดเข้าวิชาด้วย joinCode
+// อาจารย์เห็น/ตรวจได้เฉพาะบอร์ดในวิชาที่ตัวเองเป็นเจ้าของ
+model Course {
+  id        String   @id @default(cuid())
+  name      String
+  joinCode  String   @unique
+  teacherId String
+  createdAt DateTime @default(now())
+
+  teacher User    @relation("CourseTeacher", fields: [teacherId], references: [id])
+  boards  Board[]
+}
+
 model List {
-  id          String  @id @default(cuid())
-  boardId     String
-  name        String
-  description String?
-  position    Float
-  color       String?
-  // คอลัมน์ที่ถือว่า "เสร็จสิ้น" ของบอร์ด — บอร์ดละ 1 คอลัมน์เท่านั้น
-  isDoneList  Boolean @default(false)
+  id           String  @id @default(cuid())
+  boardId      String
+  name         String
+  description  String?
+  position     Float
+  color        String?
+  // คอลัมน์ที่ถือว่า "เสร็จสิ้น" ของบอร์ด — บอร์ดละ 1 คอลัมน์เท่านั้น และอยู่ขวาสุดเสมอ
+  isDoneList   Boolean @default(false)
+  // คอลัมน์ "กำลังตรวจสอบ" — บอร์ดละ 1 คอลัมน์ ถ้ามี การ์ดจะเข้า Done ได้ต่อเมื่ออาจารย์อนุมัติ
+  isReviewList Boolean @default(false)
 
   board Board  @relation(fields: [boardId], references: [id], onDelete: Cascade)
   cards Card[]
 }
 
 model Card {
-  id          String    @id @default(cuid())
-  listId      String
-  title       String
-  description String?
-  position    Float
-  dueDate     DateTime?
-  isCompleted Boolean   @default(false)
+  id            String    @id @default(cuid())
+  listId        String
+  title         String
+  description   String?
+  position      Float
+  dueDate       DateTime?
+  isCompleted   Boolean   @default(false)
   // เวลาที่ทำเสร็จ "ครั้งแรก" — ตั้งครั้งเดียว ไม่ล้างตอนลากออกจาก Done
-  completedAt DateTime?
-  priorityId  String?
-  createdById String
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  completedAt   DateTime?
+  priorityId    String?
+  createdById   String
+  // คนที่ลากการ์ดเข้าคอลัมน์ตรวจล่าสุด — แต้มตอนอาจารย์อนุมัติต้องไปที่คนนี้ ไม่ใช่อาจารย์
+  submittedById String?
+  submittedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   list        List           @relation(fields: [listId], references: [id], onDelete: Cascade)
   createdBy   User           @relation("CardCreator", fields: [createdById], references: [id])
+  submittedBy User?          @relation("CardSubmitter", fields: [submittedById], references: [id], onDelete: SetNull)
+  review      CardReview?
   priority    Priority?      @relation(fields: [priorityId], references: [id], onDelete: SetNull)
   labels      CardLabel[]
   assignees   CardAssignee[]
@@ -218,24 +258,46 @@ enum AttachmentType {
 
 // ไฟล์แนบของการ์ด — รูป/ไฟล์ที่อัปโหลดขึ้น Vercel Blob และลิงก์ที่ชี้ไปโฮสต์ไหนก็ได้
 model Attachment {
-  id     String         @id @default(cuid())
-  cardId String
-  type   AttachmentType
+  id           String         @id @default(cuid())
+  cardId       String
+  type         AttachmentType
   // ชื่อไฟล์ หรือชื่อที่ผู้ใช้ตั้งให้ลิงก์
-  name   String
-  url    String
+  name         String
+  url          String
   // เฉพาะไฟล์ที่อัปโหลดเอง (หน่วยเป็น byte)
-  size     Int?
-  mimeType String?
+  size         Int?
+  mimeType     String?
   // ต้องเก็บไว้ลบไฟล์ออกจาก Blob ตอนลบ attachment ไม่งั้นไฟล์ค้างกินโควตาไปเรื่อย ๆ
   blobPathname String?
   uploadedById String
-  createdAt    DateTime @default(now())
+  createdAt    DateTime       @default(now())
 
   card       Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
   uploadedBy User @relation(fields: [uploadedById], references: [id])
 
   @@index([cardId])
+}
+
+enum ReviewStatus {
+  APPROVED
+  CHANGES_REQUESTED
+}
+
+// ผลตรวจของอาจารย์ — การ์ด 1 ใบมีผลตรวจชุดเดียว ตรวจซ้ำ = เขียนทับ (upsert)
+// แยกจาก PointEvent โดยตั้งใจ: คะแนนจากอาจารย์ไม่ใช่แต้ม gamification
+model CardReview {
+  id         String       @id @default(cuid())
+  cardId     String       @unique
+  reviewerId String
+  status     ReviewStatus
+  // ส่งกลับแก้ไขไม่จำเป็นต้องมีคะแนน
+  score      Int?
+  feedback   String?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  card     Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  reviewer User @relation(fields: [reviewerId], references: [id])
 }
 
 model Comment {
@@ -261,6 +323,7 @@ enum ActivityType {
   MEMBER_INVITED
   MEMBER_JOINED
   COMMENT_ADDED
+  CARD_REVIEWED
 }
 
 model Activity {
@@ -288,16 +351,17 @@ enum PointEventType {
 model PointEvent {
   id        String         @id @default(cuid())
   userId    String
-  boardId   String
+  // null = บอร์ดถูกลบไปแล้ว แต่แต้มยังอยู่ (กติกา "ได้แล้วไม่ริบคืน")
+  boardId   String?
   cardId    String?
   type      PointEventType
   points    Int
   createdAt DateTime       @default(now())
 
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  board Board? @relation(fields: [boardId], references: [id], onDelete: SetNull)
   // การ์ดถูกลบแล้วแต้มยังอยู่ (สอดคล้องกับกติกา "ได้แล้วไม่ริบคืน")
-  card  Card? @relation(fields: [cardId], references: [id], onDelete: SetNull)
+  card  Card?  @relation(fields: [cardId], references: [id], onDelete: SetNull)
 
   @@unique([cardId, type])
   @@index([userId, createdAt])

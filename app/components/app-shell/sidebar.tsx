@@ -1,12 +1,21 @@
 import { getCurrentUser } from "@/lib/dal";
-import { prisma } from "@/lib/prisma";
+import { getSidebarCounts } from "@/lib/notifications";
 import { boardColor, getUserBoards } from "@/lib/boards";
-import { isTeacherEmail } from "@/lib/teacher";
+import { canManageUsers, canTeach } from "@/lib/roles";
 import { logout } from "@/app/actions/auth";
 import { Avatar, displayName } from "@/app/components/ui/avatar";
-import { IconCalendar, IconHome, IconLogout, IconReview } from "@/app/components/ui/icons";
+import {
+  IconBoard,
+  IconCalendar,
+  IconCheck,
+  IconHome,
+  IconLogout,
+  IconReview,
+  IconUsers,
+} from "@/app/components/ui/icons";
 import { SubmitButton } from "@/app/components/ui/buttons";
 import { CreateBoardDialog } from "./create-board-dialog";
+import Link from "next/link";
 import { BoardNavLink, NavLink } from "./nav-link";
 
 /**
@@ -16,10 +25,8 @@ import { BoardNavLink, NavLink } from "./nav-link";
 export async function Sidebar({ variant = "fixed" }: { variant?: "fixed" | "drawer" }) {
   const user = await getCurrentUser();
   const { owned, shared } = await getUserBoards(user.id);
-  const isTeacher = isTeacherEmail(user.email);
-  const pendingReviews = isTeacher
-    ? await prisma.card.count({ where: { list: { isReviewList: true } } })
-    : 0;
+  const isTeacher = canTeach(user.role);
+  const { pendingReviews, unreadReviews } = await getSidebarCounts(user);
 
   return (
     <aside
@@ -44,9 +51,22 @@ export async function Sidebar({ variant = "fixed" }: { variant?: "fixed" | "draw
         <NavLink href="/calendar" icon={<IconCalendar size={18} />}>
           ปฏิทินงาน
         </NavLink>
+        <NavLink href="/my-reviews" icon={<IconCheck size={18} />}>
+          ผลตรวจ{unreadReviews > 0 && ` (${unreadReviews})`}
+        </NavLink>
         {isTeacher && (
-          <NavLink href="/review" icon={<IconReview size={18} />}>
-            ตรวจงาน{pendingReviews > 0 && ` (${pendingReviews})`}
+          <>
+            <NavLink href="/courses" icon={<IconBoard size={18} />}>
+              รายวิชา
+            </NavLink>
+            <NavLink href="/review" icon={<IconReview size={18} />}>
+              ตรวจงาน{pendingReviews > 0 && ` (${pendingReviews})`}
+            </NavLink>
+          </>
+        )}
+        {canManageUsers(user.role) && (
+          <NavLink href="/admin" icon={<IconUsers size={18} />}>
+            จัดการผู้ใช้
           </NavLink>
         )}
       </nav>
@@ -89,8 +109,14 @@ export async function Sidebar({ variant = "fixed" }: { variant?: "fixed" | "draw
       </div>
 
       <div className="border-line flex items-center gap-2 border-t px-2 pt-3">
-        <Avatar user={user} size={28} />
-        <span className="text-text min-w-0 flex-1 truncate text-xs">{displayName(user)}</span>
+        <Link
+          href="/account"
+          title="บัญชีของฉัน"
+          className="hover:bg-panel-2 -mx-1 flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1 py-1"
+        >
+          <Avatar user={user} size={28} />
+          <span className="text-text min-w-0 flex-1 truncate text-xs">{displayName(user)}</span>
+        </Link>
         <form action={logout}>
           <SubmitButton
             ariaLabel="ออกจากระบบ"

@@ -57,6 +57,8 @@ export function KanbanBoard({
   boardPriorities,
   canEdit,
   canReview,
+  requiresApproval,
+  inCourse,
 }: {
   boardId: string;
   initialLists: ListWithCards[];
@@ -64,8 +66,12 @@ export function KanbanBoard({
   boardMembers: PublicUser[];
   boardPriorities: Priority[];
   canEdit: boolean;
-  /** อาจารย์ — พาการ์ดเข้าคอลัมน์เสร็จสิ้นได้แม้บอร์ดจะมีคอลัมน์ตรวจ */
+  /** อาจารย์ของรายวิชา — พาการ์ดเข้าคอลัมน์เสร็จสิ้นได้แม้บอร์ดจะต้องรออนุมัติ */
   canReview: boolean;
+  /** ผูกรายวิชา + มีคอลัมน์ตรวจ (คำนวณที่ assertBoardAccess) */
+  requiresApproval: boolean;
+  /** บอร์ดในรายวิชา — การ์ดที่ตรวจแล้วและคอลัมน์ที่มีการ์ดแบบนั้นลบไม่ได้ */
+  inCourse: boolean;
 }) {
   const [lists, setLists] = useState(initialLists);
   const [activeCard, setActiveCard] = useState<CardWithRelations | null>(null);
@@ -99,9 +105,8 @@ export function KanbanBoard({
     setTimeout(() => setNotice((current) => (current?.key === key ? null : current)), 3500);
   }
 
-  // บอร์ดที่มีคอลัมน์ตรวจ = การ์ดเข้าคอลัมน์เสร็จสิ้นได้ต่อเมื่ออาจารย์อนุมัติ (ด่านจริงอยู่ฝั่ง action)
-  const requiresReview = lists.some((list) => list.isReviewList);
-  const blockedFromDone = requiresReview && !canReview;
+  // บอร์ดในรายวิชาที่มีคอลัมน์ตรวจ = การ์ดเข้าคอลัมน์เสร็จสิ้นได้ต่อเมื่ออาจารย์อนุมัติ (ด่านจริงอยู่ฝั่ง action)
+  const blockedFromDone = requiresApproval && !canReview;
 
   const filtering = isFilterActive(filters);
   // ลากไม่ได้ทั้งตอนกรอง (ตำแหน่งเพื่อนบ้านเพี้ยน) และตอนเป็น viewer
@@ -303,6 +308,7 @@ export function KanbanBoard({
                 accent={LIST_ACCENTS[listIndex % LIST_ACCENTS.length]}
                 dragDisabled={dragDisabled}
                 canEdit={canEdit}
+                deleteLocked={inCourse && list.cards.some((card) => card.review)}
                 onEdit={() => setListDialog({ mode: "edit", listId: list.id })}
                 onInsert={(side) => setListDialog({ mode: "new", anchorId: list.id, side })}
                 onAddCard={() => setAddCardListId(list.id)}
@@ -372,6 +378,7 @@ export function KanbanBoard({
           moveRightBlocked={
             blockedFromDone && Boolean(lists[openCardListIndex + 1]?.isDoneList)
           }
+          deleteLocked={inCourse && Boolean(openCard.review)}
           onClose={() => setOpenCardId(null)}
           onAwarded={celebrate}
           onError={warn}
@@ -417,6 +424,7 @@ function SortableList({
   accent,
   dragDisabled,
   canEdit,
+  deleteLocked,
   onEdit,
   onInsert,
   onAddCard,
@@ -426,6 +434,7 @@ function SortableList({
   accent: string;
   dragDisabled: boolean;
   canEdit: boolean;
+  deleteLocked: boolean;
   onEdit: () => void;
   onInsert: (side: "before" | "after") => void;
   onAddCard: () => void;
@@ -510,6 +519,7 @@ function SortableList({
             listName={list.name}
             isDoneList={list.isDoneList}
             isReviewList={list.isReviewList}
+            deleteLocked={deleteLocked}
             onEdit={onEdit}
             onInsert={onInsert}
           />

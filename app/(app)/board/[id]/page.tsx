@@ -8,7 +8,7 @@ import { boardColor } from "@/lib/boards";
 import { InviteStatus } from "@/app/generated/prisma/enums";
 import { Panel } from "@/app/components/ui/panel";
 import { ProgressRing } from "@/app/components/ui/progress-ring";
-import { AvatarStack } from "@/app/components/ui/avatar";
+import { AvatarStack, displayName } from "@/app/components/ui/avatar";
 import { Chip } from "@/app/components/ui/chip";
 import { IconCalendar, IconTrophy } from "@/app/components/ui/icons";
 import { KanbanBoard } from "./kanban-board";
@@ -34,6 +34,7 @@ export default async function BoardPage({ params }: { params: Promise<{ id: stri
         orderBy: { createdAt: "desc" },
       },
       shareLink: true,
+      course: { select: { name: true, teacher: { select: publicUserSelect } } },
       lists: {
         orderBy: { position: "asc" },
         include: {
@@ -96,6 +97,18 @@ export default async function BoardPage({ params }: { params: Promise<{ id: stri
         ) : (
           !access.canEdit && <Chip tone="info">ดูอย่างเดียว</Chip>
         )}
+        {board.course ? (
+          <Chip tone="accent" title={`อาจารย์ ${displayName(board.course.teacher)}`}>
+            วิชา {board.course.name}
+          </Chip>
+        ) : (
+          // มีคอลัมน์ตรวจแต่ไม่ผูกวิชา = ไม่มีอาจารย์เห็น ลากเข้าเสร็จสิ้นได้เอง — บอกให้รู้ตัว
+          board.lists.some((list) => list.isReviewList) && (
+            <Chip tone="warn" title="ผูกรายวิชาได้ที่ ตั้งค่าบอร์ด → รายวิชา">
+              ยังไม่ผูกรายวิชา
+            </Chip>
+          )
+        )}
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Link
@@ -116,6 +129,14 @@ export default async function BoardPage({ params }: { params: Promise<{ id: stri
             shareLink={access.isOwner ? board.shareLink : null}
             canEdit={access.canEdit}
             canInvite={access.isOwner}
+            owner={board.owner}
+            course={
+              board.course
+                ? { name: board.course.name, teacherName: displayName(board.course.teacher) }
+                : null
+            }
+            members={board.members.map((member) => ({ role: member.role, user: member.user }))}
+            currentUserId={user.id}
           />
         </div>
       </header>
@@ -161,6 +182,8 @@ export default async function BoardPage({ params }: { params: Promise<{ id: stri
         boardPriorities={board.priorities}
         canEdit={access.canEdit}
         canReview={access.canReview}
+        requiresApproval={access.requiresApproval}
+        inCourse={Boolean(access.courseId)}
       />
 
       <Panel title="กิจกรรมล่าสุด" className="max-w-2xl">

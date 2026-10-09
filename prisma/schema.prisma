@@ -12,9 +12,23 @@ datasource db {
   provider = "postgresql"
 }
 
+enum UserRole {
+  USER
+  TEACHER
+  ADMIN
+}
+
 model User {
   id             String         @id @default(cuid())
+  // เก็บเป็นตัวพิมพ์เล็กเสมอ — ADMIN_EMAILS เทียบแบบไม่สนตัวพิมพ์ ถ้าเก็บปน
+  // คนสมัคร "ADMIN@x" จะได้บัญชีใหม่ที่ถูกนับเป็นแอดมิน
   email          String         @unique
+  // role จริงต้องอ่านผ่าน getCurrentUser() เท่านั้น (อีเมลใน ADMIN_EMAILS เป็น ADMIN เสมอ)
+  role           UserRole       @default(USER)
+  // ไม่ null = ถูกระงับ ล็อกอินไม่ได้ และทุกหน้าพาไป /suspended
+  disabledAt     DateTime?
+  // เวลาที่เปิดหน้า "ผลตรวจ" ล่าสุด — ผลตรวจที่ใหม่กว่านี้นับเป็นแจ้งเตือนที่ยังไม่อ่าน
+  reviewsSeenAt  DateTime?
   name           String?
   image          String?
   passwordHash   String?
@@ -29,6 +43,7 @@ model User {
   attachments    Attachment[]
   cardsSubmitted Card[]         @relation("CardSubmitter")
   reviewsGiven   CardReview[]
+  coursesTaught  Course[]       @relation("CourseTeacher")
 }
 
 model Board {
@@ -37,6 +52,9 @@ model Board {
   description String?
   color       String?
   ownerId     String
+  // รายวิชาที่บอร์ดนี้ส่งงาน (บอร์ดละ 1 วิชา) — null = บอร์ดส่วนตัว อาจารย์มองไม่เห็น
+  courseId    String?
+  course      Course?  @relation(fields: [courseId], references: [id], onDelete: SetNull)
   owner       User     @relation("BoardOwner", fields: [ownerId], references: [id])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -105,6 +123,19 @@ model BoardShareLink {
   updatedAt DateTime  @updatedAt
 
   board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+}
+
+// รายวิชาของอาจารย์ — นักศึกษาผูกบอร์ดเข้าวิชาด้วย joinCode
+// อาจารย์เห็น/ตรวจได้เฉพาะบอร์ดในวิชาที่ตัวเองเป็นเจ้าของ
+model Course {
+  id        String   @id @default(cuid())
+  name      String
+  joinCode  String   @unique
+  teacherId String
+  createdAt DateTime @default(now())
+
+  teacher User    @relation("CourseTeacher", fields: [teacherId], references: [id])
+  boards  Board[]
 }
 
 model List {
@@ -320,16 +351,17 @@ enum PointEventType {
 model PointEvent {
   id        String         @id @default(cuid())
   userId    String
-  boardId   String
+  // null = บอร์ดถูกลบไปแล้ว แต่แต้มยังอยู่ (กติกา "ได้แล้วไม่ริบคืน")
+  boardId   String?
   cardId    String?
   type      PointEventType
   points    Int
   createdAt DateTime       @default(now())
 
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  board Board? @relation(fields: [boardId], references: [id], onDelete: SetNull)
   // การ์ดถูกลบแล้วแต้มยังอยู่ (สอดคล้องกับกติกา "ได้แล้วไม่ริบคืน")
-  card  Card? @relation(fields: [cardId], references: [id], onDelete: SetNull)
+  card  Card?  @relation(fields: [cardId], references: [id], onDelete: SetNull)
 
   @@unique([cardId, type])
   @@index([userId, createdAt])

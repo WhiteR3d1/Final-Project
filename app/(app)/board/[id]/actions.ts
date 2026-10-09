@@ -5,12 +5,14 @@ import { z } from "zod";
 import { randomUUID } from "crypto";
 import { del, put } from "@vercel/blob";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/dal";
 import { assertBoardAccess, type BoardAccess } from "@/lib/board-access";
 import { ActivityType, BoardRole, InviteStatus } from "@/app/generated/prisma/enums";
 import { syncCardCompletion } from "@/lib/card-completion";
 import { insertListPosition, isDoneListName, positionBetween } from "@/lib/drag";
+import { normalizeJoinCode } from "@/lib/join-code";
 import type { Prisma } from "@/app/generated/prisma/client";
 import {
   MAX_ATTACHMENT_BYTES,
@@ -115,6 +117,8 @@ export async function deleteListAction(formData: FormData) {
   const list = await prisma.list.findUniqueOrThrow({ where: { id: listId } });
   const access = await assertBoardAccess(list.boardId, user);
   if (!access?.canEdit) return;
+  // บอร์ดในรายวิชา: ลบคอลัมน์ = การ์ดและผลตรวจข้างในหายตาม คะแนนจะหายจาก CSV ของอาจารย์
+  if (access.courseId && (await prisma.cardReview.count({ where: { card: { listId } } })) > 0) return;
 
   await prisma.list.delete({ where: { id: listId } });
 
@@ -267,7 +271,7 @@ export async function moveCardAction(
   if (targetIndex < 0 || targetIndex >= lists.length) return;
 
   const targetList = lists[targetIndex];
-  if (needsTeacherApproval(access, lists, targetList, true)) {
+  if (needsTeacherApproval(access, targetList, true)) {
     return { error: REVIEW_REQUIRED_ERROR };
   }
 
@@ -333,7 +337,7 @@ export async function reorderCardAction(
   if (!targetList) return;
 
   const listChanged = targetListId !== card.listId;
-  if (needsTeacherApproval(access, boardLists, targetList, listChanged)) {
+  if (needsTeacherApproval(access, targetList, listChanged)) {
     return { error: REVIEW_REQUIRED_ERROR };
   }
 
@@ -456,12 +460,14 @@ export async function deleteCardAction(formData: FormData) {
 
   const card = await prisma.card.findUniqueOrThrow({
     where: { id: cardId },
-    include: { list: true },
+    include: { list: true, review: { select: { id: true } } },
   });
 
   const boardId = card.list.boardId;
   const access = await assertBoardAccess(boardId, user);
   if (!access?.canEdit) return;
+  // บอร์ดในรายวิชา: การ์ดที่อาจารย์ตรวจแล้วลบไม่ได้ ไม่งั้นคะแนนหายจาก CSV ของอาจารย์
+  if (access.courseId && card.review) return;
 
   await prisma.card.delete({ where: { id: cardId } });
 
@@ -862,8 +868,76 @@ export async function regenerateShareLinkAction(formData: FormData) {
   revalidatePath(`/board/${boardId}`);
 }
 
+/** เปลี่ยนสิทธิ์สมาชิก EDITOR ↔ VIEWER — **เจ้าของเท่านั้น** (ระดับเดียวกับการเชิญ) */
+export async function setMemberRoleAction(formData: FormData) {
+  const boardId = formData.get("boardId");
+  const memberId = formData.get("userId");
+  const rawRole = formData.get("role");
+  if (typeof boardId !== "string" || typeof memberId !== "string") return;
+  // ไม่รับค่าอื่นเลย (ต่างจากตอนเชิญที่ค่าแปลก ๆ ตกเป็น EDITOR) — นี่คือการแก้สิทธิ์ ต้องตั้งใจ
+  if (rawRole !== BoardRole.EDITOR && rawRole !== BoardRole.VIEWER) return;
+
+  const user = await getCurrentUser();
+
+  const board = await prisma.board.findUnique({ where: { id: boardId }, select: { ownerId: true } });
+  if (board?.ownerId !== user.id) return;
+
+  await prisma.boardMember.updateMany({
+    where: { boardId, userId: memberId },
+    data: { role: rawRole },
+  });
+
+  revalidatePath(`/board/${boardId}`);
+}
+
+/** เอาสมาชิกออกจากบอร์ด — **เจ้าของเท่านั้น** เจ้าของเองไม่มีแถวใน BoardMember จึงเอาออกไม่ได้อยู่แล้ว */
+export async function removeMemberAction(formData: FormData) {
+  const boardId = formData.get("boardId");
+  const memberId = formData.get("userId");
+  if (typeof boardId !== "string" || typeof memberId !== "string") return;
+
+  const user = await getCurrentUser();
+
+  const board = await prisma.board.findUnique({ where: { id: boardId }, select: { ownerId: true } });
+  if (board?.ownerId !== user.id || memberId === board.ownerId) return;
+
+  await removeMembership(boardId, memberId);
+
+  revalidatePath(`/board/${boardId}`);
+}
+
+/** สมาชิกออกจากบอร์ดเอง แล้วพากลับหน้าแรก (เปิดบอร์ดนี้ต่อไม่ได้แล้ว) */
+export async function leaveBoardAction(formData: FormData) {
+  const boardId = formData.get("boardId");
+  if (typeof boardId !== "string") return;
+
+  const user = await getCurrentUser();
+
+  const membership = await prisma.boardMember.findUnique({
+    where: { boardId_userId: { boardId, userId: user.id } },
+  });
+  if (!membership) return;
+
+  await removeMembership(boardId, user.id);
+
+  // sidebar อยู่ใน layout — ต้อง revalidate ทั้ง layout ไม่งั้นบอร์ดยังค้างในรายการ "แชร์กับฉัน"
+  revalidatePath("/", "layout");
+  redirect("/");
+}
+
+/**
+ * ลบสมาชิกพร้อมการมอบหมายงานของเขาในบอร์ดนี้ — ไม่งั้นการ์ดจะโชว์ผู้รับผิดชอบ
+ * ที่เปิดบอร์ดไม่ได้แล้ว (ลิงก์แชร์ที่ยังเปิดอยู่ยังพาเขากลับเข้ามาได้ ถ้าเจ้าของไม่ปิด)
+ */
+async function removeMembership(boardId: string, userId: string) {
+  await prisma.$transaction([
+    prisma.cardAssignee.deleteMany({ where: { userId, card: { list: { boardId } } } }),
+    prisma.boardMember.deleteMany({ where: { boardId, userId } }),
+  ]);
+}
+
 /** การ์ด + boardId + สิทธิ์ ในการเรียกครั้งเดียว — ทุก action ของไฟล์แนบต้องผ่านด่านนี้ */
-async function cardEditAccess(cardId: string, user: { id: string; email: string }) {
+async function cardEditAccess(cardId: string, user: Parameters<typeof assertBoardAccess>[1]) {
   const card = await prisma.card.findUniqueOrThrow({
     where: { id: cardId },
     include: { list: { select: { boardId: true } } },
@@ -1121,17 +1195,17 @@ async function clearDoneList(tx: Prisma.TransactionClient, boardId: string) {
 const REVIEW_REQUIRED_ERROR = "บอร์ดนี้ต้องให้อาจารย์ตรวจก่อน การ์ดถึงจะเข้าคอลัมน์เสร็จสิ้นได้";
 
 /**
- * บอร์ดที่มีคอลัมน์ตรวจ: มีแค่อาจารย์ที่พาการ์ด "เข้า" คอลัมน์เสร็จสิ้นได้ (ผ่านหน้าตรวจงาน)
- * จัดลำดับภายในคอลัมน์เสร็จสิ้นเองยังได้ และบอร์ดที่ไม่มีคอลัมน์ตรวจทำงานแบบเดิม
+ * บอร์ดที่ผูกรายวิชาและมีคอลัมน์ตรวจ (`access.requiresApproval`): มีแค่อาจารย์ของวิชานั้น
+ * ที่พาการ์ด "เข้า" คอลัมน์เสร็จสิ้นได้ (ผ่านหน้าตรวจงาน) จัดลำดับภายในคอลัมน์เสร็จสิ้นเองยังได้
+ * บอร์ดส่วนตัวทำงานแบบเดิม — ไม่มีอาจารย์เห็น ถ้าบังคับด่านนี้การ์ดจะค้างตลอดไป
  */
 function needsTeacherApproval(
   access: BoardAccess,
-  boardLists: { isReviewList: boolean }[],
   targetList: { isDoneList: boolean },
   listChanged: boolean
 ) {
   if (!targetList.isDoneList || !listChanged || access.canReview) return false;
-  return boardLists.some((list) => list.isReviewList);
+  return access.requiresApproval;
 }
 
 /** เข้าคอลัมน์ตรวจ = ส่งงาน — จำไว้ว่าใครส่ง แต้มตอนอาจารย์อนุมัติจะไปที่คนนี้ */
@@ -1143,4 +1217,74 @@ function submissionFields(
   return targetList.isReviewList && listChanged
     ? { submittedById: userId, submittedAt: new Date() }
     : {};
+}
+
+export type LinkCourseState = { error?: string } | undefined;
+
+/**
+ * ผูกบอร์ดเข้ารายวิชาด้วยรหัสเข้าร่วม — **เจ้าของบอร์ดเท่านั้น** และผูกได้ครั้งเดียว
+ * การถอนออกเป็นสิทธิ์ของอาจารย์ (unlinkBoardAction ใน courses/actions.ts) ไม่งั้นนักศึกษา
+ * ถอนบอร์ดออกแล้วลบทิ้งเพื่อลบคะแนนที่ไม่ชอบได้
+ */
+export async function linkBoardToCourseAction(
+  _state: LinkCourseState,
+  formData: FormData
+): Promise<LinkCourseState> {
+  const boardId = formData.get("boardId");
+  const rawCode = formData.get("joinCode");
+  if (typeof boardId !== "string" || typeof rawCode !== "string" || !rawCode.trim()) {
+    return { error: "กรอกรหัสรายวิชา" };
+  }
+
+  const user = await getCurrentUser();
+
+  const board = await prisma.board.findUnique({
+    where: { id: boardId },
+    select: { ownerId: true, courseId: true },
+  });
+  if (board?.ownerId !== user.id) return { error: "เฉพาะเจ้าของบอร์ดเท่านั้นที่ผูกรายวิชาได้" };
+  if (board.courseId) return { error: "บอร์ดนี้อยู่ในรายวิชาแล้ว" };
+
+  const course = await prisma.course.findUnique({
+    where: { joinCode: normalizeJoinCode(rawCode) },
+    select: { id: true },
+  });
+  if (!course) return { error: "ไม่พบรายวิชานี้ ตรวจรหัสอีกครั้ง" };
+
+  await prisma.$transaction(async (tx) => {
+    // updateMany + เงื่อนไข courseId: null = กันกดผูกพร้อมกันสองแท็บแล้วได้วิชาที่สองทับ
+    const linked = await tx.board.updateMany({
+      where: { id: boardId, courseId: null },
+      data: { courseId: course.id },
+    });
+    if (linked.count === 0) return;
+
+    // อาจารย์ต้องมีคอลัมน์ตรวจให้ดูและคอลัมน์เสร็จสิ้นให้อนุมัติเข้า — บอร์ดเก่าอาจยังไม่มี
+    const lists = await tx.list.findMany({
+      where: { boardId },
+      orderBy: { position: "asc" },
+      select: { id: true, position: true, isDoneList: true, isReviewList: true },
+    });
+    if (!lists.some((list) => list.isDoneList)) {
+      const done = await tx.list.create({
+        data: {
+          boardId,
+          name: "เสร็จสิ้น",
+          isDoneList: true,
+          position: positionBetween(lists[lists.length - 1]?.position, undefined),
+        },
+        select: { id: true, position: true, isDoneList: true, isReviewList: true },
+      });
+      lists.push(done);
+    }
+    if (!lists.some((list) => list.isReviewList)) {
+      await tx.list.create({
+        data: { boardId, name: "กำลังตรวจสอบ", isReviewList: true, position: insertListPosition(lists) },
+      });
+    }
+  });
+
+  revalidatePath(`/board/${boardId}`);
+  revalidatePath("/review");
+  return undefined;
 }

@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { del } from "@vercel/blob";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/dal";
 
@@ -74,4 +75,46 @@ export async function updateBoardAction(formData: FormData) {
   revalidatePath(`/board/${boardId}`);
   // sidebar กับ dashboard โชว์ชื่อและสีบอร์ดอยู่ด้วย
   revalidatePath("/");
+}
+
+/**
+ * ลบบอร์ดทั้งบอร์ด — **เฉพาะเจ้าของ** คอลัมน์/การ์ด/กิจกรรม cascade ตามไป
+ * แต่ PointEvent แค่หลุดจากบอร์ด (boardId → null) แต้มที่ได้ไปแล้วไม่ถูกริบ
+ */
+export async function deleteBoardAction(formData: FormData) {
+  const boardId = formData.get("boardId");
+  if (typeof boardId !== "string") return;
+
+  const user = await getCurrentUser();
+
+  const board = await prisma.board.findUnique({
+    where: { id: boardId },
+    select: { ownerId: true, courseId: true },
+  });
+  if (board?.ownerId !== user.id) return;
+  // บอร์ดในรายวิชาลบไม่ได้ (คะแนนจะหายจาก CSV) — อาจารย์ต้องถอนออกจากวิชาก่อน
+  if (board.courseId) return;
+
+  // เก็บ path ของไฟล์ก่อนลบแถว ไม่งั้นไฟล์ใน Blob ค้างกินโควตาโดยไม่มีใครรู้
+  const uploads = await prisma.attachment.findMany({
+    where: { card: { list: { boardId } }, blobPathname: { not: null } },
+    select: { blobPathname: true },
+  });
+
+  await prisma.board.delete({ where: { id: boardId } });
+
+  // ลบไฟล์หลังลบใน DB และไม่ให้ความล้มเหลวตรงนี้ทำให้ลบบอร์ดไม่ได้
+  // (ไม่มี BLOB_READ_WRITE_TOKEN หรือ Blob ล่ม ก็แค่เหลือไฟล์กำพร้า)
+  const pathnames = uploads.flatMap((upload) => (upload.blobPathname ? [upload.blobPathname] : []));
+  if (pathnames.length > 0 && process.env.BLOB_READ_WRITE_TOKEN) {
+    try {
+      await del(pathnames);
+    } catch {
+      console.error(`Could not delete ${pathnames.length} blob file(s) of deleted board ${boardId}`);
+    }
+  }
+
+  // sidebar อยู่ใน layout ต้อง revalidate ทั้ง layout ไม่งั้นบอร์ดที่ลบแล้วยังค้างอยู่ในรายการ
+  revalidatePath("/", "layout");
+  redirect("/");
 }

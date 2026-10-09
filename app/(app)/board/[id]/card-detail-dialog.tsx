@@ -41,6 +41,7 @@ export function CardDetailDialog({
   boardPriorities,
   canEdit,
   moveRightBlocked,
+  deleteLocked,
   onClose,
   onAwarded,
   onError,
@@ -54,6 +55,8 @@ export function CardDetailDialog({
   boardPriorities: Priority[];
   canEdit: boolean;
   moveRightBlocked: boolean;
+  /** การ์ดที่อาจารย์ตรวจแล้วในบอร์ดรายวิชา — ลบแล้วคะแนนหาย (ด่านจริงอยู่ที่ deleteCardAction) */
+  deleteLocked: boolean;
   onClose: () => void;
   onAwarded: (points: number) => void;
   onError: (message: string) => void;
@@ -314,16 +317,20 @@ export function CardDetailDialog({
 
       {canEdit && (
       <footer className="border-line mt-6 flex flex-wrap items-center gap-2 border-t pt-4">
-        <form action={deleteCardAction} className="mr-auto">
-          <input type="hidden" name="cardId" value={card.id} />
-          <ConfirmSubmitButton
-            confirmLabel="กดอีกครั้งเพื่อลบ"
-            className="border-line text-danger hover:bg-danger/10 hover:border-danger flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium"
-            confirmClassName="bg-danger text-danger-ink rounded-lg px-3 py-1.5 text-sm font-medium"
-          >
-            <IconTrash size={15} /> ลบการ์ดนี้
-          </ConfirmSubmitButton>
-        </form>
+        {deleteLocked ? (
+          <p className="text-muted mr-auto text-xs">การ์ดที่อาจารย์ตรวจแล้วลบไม่ได้ (คะแนนจะหาย)</p>
+        ) : (
+          <form action={deleteCardAction} className="mr-auto">
+            <input type="hidden" name="cardId" value={card.id} />
+            <ConfirmSubmitButton
+              confirmLabel="กดอีกครั้งเพื่อลบ"
+              className="border-line text-danger hover:bg-danger/10 hover:border-danger flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium"
+              confirmClassName="bg-danger text-danger-ink rounded-lg px-3 py-1.5 text-sm font-medium"
+            >
+              <IconTrash size={15} /> ลบการ์ดนี้
+            </ConfirmSubmitButton>
+          </form>
+        )}
 
         <form id={editFormId} action={updateCardAction}>
           <input type="hidden" name="cardId" value={card.id} />

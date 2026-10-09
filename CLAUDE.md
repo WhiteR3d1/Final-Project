@@ -60,15 +60,22 @@ app/
   api/auth/[...nextauth]/     # route handler ของ NextAuth (re-export handlers เฉย ๆ)
   actions/
     auth.ts                   # server actions: signup / login / logout
-    board.ts                  # server actions: สร้าง/แก้ไขบอร์ด (แก้ได้เฉพาะเจ้าของ)
+    board.ts                  # server actions: สร้าง/แก้ไข/ลบบอร์ด (แก้/ลบได้เฉพาะเจ้าของ)
+  suspended/page.tsx          # ปลายทางของบัญชีที่ถูกระงับ — อยู่นอก (app) และใช้ getSessionUser() กันวนลูป
 
   (app)/                      # route group ของหน้าที่ต้องล็อกอิน — ไม่เปลี่ยน URL
     layout.tsx                # โครงแอป: Sidebar + Topbar + <main>
     page.tsx                  # Dashboard                    → "/"
     search/page.tsx           # ผลการค้นหาข้ามบอร์ด (?q=)     → "/search"
     calendar/page.tsx         # ปฏิทินกำหนดส่ง (?m=, ?board=) → "/calendar"
-    review/                   # หน้าตรวจงานของอาจารย์ (?tab=pending|done, ?board=) → "/review"
-      page.tsx                # การ์ดในคอลัมน์ตรวจจากทุกบอร์ด — ไม่ใช่อาจารย์ = notFound()
+    account/                  # บัญชีของฉัน: เปลี่ยนรหัสผ่าน (รู้รหัสเดิม) → "/account"
+    admin/                    # จัดการผู้ใช้ (แอดมินเท่านั้น): role / ระงับ / ตั้งรหัสใหม่ → "/admin"
+    courses/                  # รายวิชาของอาจารย์ → "/courses", "/courses/[id]"
+      actions.ts              # สร้าง/ลบวิชา, สุ่มรหัสใหม่, ถอนบอร์ดออก, exportCourseScoresAction (CSV)
+      [id]/csv-download-button.tsx # client — รับ string จาก action แล้วสร้างไฟล์ดาวน์โหลดเอง
+    my-reviews/               # ผลตรวจของงานฉัน + เคลียร์ตัวเลขแจ้งเตือน → "/my-reviews"
+    review/                   # หน้าตรวจงานของอาจารย์ (?tab=pending|done, ?course=, ?board=) → "/review"
+      page.tsx                # การ์ดในคอลัมน์ตรวจของบอร์ดในวิชาตัวเอง — ไม่ใช่อาจารย์ = notFound()
       actions.ts              # reviewCardAction: อนุมัติ (คะแนน + ย้ายเข้าเสร็จสิ้น) / ส่งกลับแก้ไข
       review-form.tsx         # client — ช่องคะแนน/ความเห็น (controlled) + ปุ่มสองปุ่มแยกด้วย name="intent"
     board/[id]/
@@ -104,9 +111,13 @@ app/
 
 lib/
   prisma.ts                   # Prisma Client singleton (กัน hot-reload สร้างซ้ำ)
-  dal.ts                      # verifySession() / getCurrentUser() — ประตูเดียวสู่ตัวตนผู้ใช้
+  dal.ts                      # verifySession() / getCurrentUser() (+ role จริง, ด่านบัญชีถูกระงับ)
   board-access.ts             # assertBoardAccess() — เช็คสิทธิ์ owner/member/อาจารย์ ของบอร์ด
-  teacher.ts                  # isTeacherEmail() — อ่าน TEACHER_EMAILS (ฟังก์ชันบริสุทธิ์ → มี unit test)
+  roles.ts                    # effectiveRole() / canTeach() / canManageUsers() + ADMIN_EMAILS (มี unit test)
+  notifications.ts            # ตัวเลขบน sidebar (งานรอตรวจ / ผลตรวจที่ยังไม่อ่าน) ห่อ cache()
+  password.ts                 # newPasswordSchema — กติการหัสผ่านเดียวกันทั้งสมัคร/เปลี่ยน/แอดมินตั้ง
+  join-code.ts                # สุ่มรหัสเข้าร่วมรายวิชา (ฟังก์ชันบริสุทธิ์ → มี unit test)
+  csv.ts                      # toCsv() + BOM + กัน formula injection (ฟังก์ชันบริสุทธิ์ → มี unit test)
   card-completion.ts          # syncCardCompletion() — ทางเข้าเดียวของกติกา "เสร็จ" + แต้ม
   drag.ts                     # ตำแหน่งตอนลาก/แทรกคอลัมน์ + isDoneListName() (ฟังก์ชันบริสุทธิ์ → มี unit test)
   boards.ts                   # accessibleBoardWhere() + getUserBoards() + boardColor()
@@ -122,7 +133,8 @@ types/
 prisma/
   schema.prisma               # นิยามโมเดลทั้งหมด
   migrations/                 # ประวัติ migration
-  seed.ts                     # ข้อมูลตัวอย่าง (demo@kanban.dev / demopass123)
+  seed.ts                     # ข้อมูลตัวอย่าง: นักศึกษา demo@ / อาจารย์ teacher@ / แอดมิน admin@kanban.dev
+                              # + รายวิชา "วิชาตัวอย่าง" รหัส KANBAN ที่ผูกบอร์ด Study Plan
 ```
 
 ---
@@ -138,6 +150,10 @@ prisma/
    ห้ามเรียก `auth()` ตรง ๆ และห้ามอ่าน cookie เองจากที่อื่น
    ทั้งสองฟังก์ชันห่อด้วย React `cache()` เรียกซ้ำใน request เดียวไม่ query ซ้ำ
    และจะ `redirect("/login")` ให้เองถ้าไม่มี session
+   - `getCurrentUser()` คืน `role` ที่คำนวณแล้ว (รวม `ADMIN_EMAILS`) — **ห้ามอ่าน `user.role` จาก DB ตรง ๆ
+     และห้ามเก็บ role ใน JWT** (เปลี่ยน role แล้วจะค้างได้ถึง 7 วัน)
+   - บัญชีที่ถูกระงับ (`disabledAt`) ถูก `redirect("/suspended")` ที่นี่ หน้านั้นต้องใช้ `getSessionUser()`
+     และอยู่นอก `(app)` เพราะ JWT ยังไม่หมดอายุ proxy ยังมองว่าล็อกอินอยู่ — ใช้ `getCurrentUser()` = วนลูป
 2. **`auth.config.ts` ห้าม import Prisma หรือ bcrypt** เพราะ `proxy.ts` ใช้ไฟล์นี้
    ตัว provider ที่แตะ DB ต้องอยู่ใน `auth.ts` เท่านั้น
 3. **ใช้ JWT strategy ไม่ใช่ database session** — Credentials provider ของ NextAuth
@@ -149,6 +165,10 @@ prisma/
    และใช้ `redirect: false` เพื่อไม่ให้ NextAuth redirect ทับจน `useActionState` เสีย state
 6. ข้อความตอนล็อกอินพลาดต้องเป็น "อีเมลหรือรหัสผ่านไม่ถูกต้อง" เสมอ
    **ห้ามแยกว่าอีเมลผิดหรือรหัสผ่านผิด** เพราะเปิดช่องให้เดาว่ามีอีเมลนี้อยู่ในระบบ
+   ข้อยกเว้นเดียว: บัญชีถูกระงับได้ "บัญชีนี้ถูกระงับ" — `authorize()` โยน `AccountDisabled`
+   **หลังรหัสผ่านถูกแล้วเท่านั้น** คนเดารหัสจึงไม่รู้อะไรเพิ่ม
+7. **อีเมลเก็บเป็นตัวพิมพ์เล็กเสมอ** (schema สมัคร/ล็อกอินและ `authorize()` แปลงก่อน) ไม่งั้นคนสมัคร
+   `ADMIN@x` จะได้บัญชีใหม่ที่ `isAdminEmail()` (ซึ่งไม่สนตัวพิมพ์) นับเป็นแอดมิน
 
 ### การกันสิทธิ์ (authorization) — ทำ 2 ชั้น
 
@@ -158,7 +178,7 @@ prisma/
 - **ชั้นใน (ของจริง)** — ทุก Server Action และทุก page ต้องเช็คเองเสมอ:
   ```ts
   const user = await getCurrentUser();                       // ต้องล็อกอิน
-  const access = await assertBoardAccess(boardId, user.id);  // ต้องเป็น owner หรือ member
+  const access = await assertBoardAccess(boardId, user);     // owner / member / อาจารย์ของวิชา
   if (!access?.canEdit) return;   // action ที่แก้ข้อมูล
   if (!access) notFound();        // page ที่แค่อ่าน (viewer เข้าได้)
   ```
@@ -166,23 +186,31 @@ prisma/
 
 ### สิทธิ์ในบอร์ด (`BoardRole`)
 
-`assertBoardAccess(boardId, user)` รับ `{ id, email }` (ส่ง `user` จาก `getCurrentUser()` ทั้งก้อนได้เลย)
-แล้วคืน `{ id, ownerId, role, isOwner, canEdit, canReview }` มาให้
-**ห้ามให้ action ไปตีความ role เอง** ใช้ `canEdit` / `canReview` ที่มันคำนวณมาแล้ว
+`assertBoardAccess(boardId, user)` รับ `{ id, role }` (ส่ง `user` จาก `getCurrentUser()` ทั้งก้อนได้เลย)
+แล้วคืน `{ id, ownerId, role, isOwner, canEdit, canReview, courseId, requiresApproval }` มาให้
+**ห้ามให้ action ไปตีความ role เอง** ใช้ `canEdit` / `canReview` / `requiresApproval` ที่มันคำนวณมาแล้ว
 
 | | ดูบอร์ด | แก้การ์ด/คอลัมน์/ป้าย/priority | คอมเมนต์ | เชิญสมาชิก | ตรวจงาน/ให้คะแนน |
 |---|---|---|---|---|---|
 | OWNER (`Board.ownerId`) | ✓ | ✓ | ✓ | ✓ | ✗ |
 | EDITOR (`BoardMember.role`) | ✓ | ✓ | ✓ | ✗ | ✗ |
 | VIEWER (`BoardMember.role`) | ✓ | ✗ | ✗ | ✗ | ✗ |
-| TEACHER (อีเมลอยู่ใน `TEACHER_EMAILS`) | ✓ ทุกบอร์ด | ✗ | ✗ | ✗ | ✓ |
+| TEACHER (อาจารย์เจ้าของรายวิชาที่บอร์ดผูกอยู่) | ✓ เฉพาะบอร์ดในวิชาตัวเอง | ✗ | ✗ | ✗ | ✓ |
 
-- **อาจารย์ไม่ได้มาจาก DB แต่มาจาก env `TEACHER_EMAILS`** (`lib/teacher.ts`) ไม่ต้องถูกเชิญ
-  `assertBoardAccess` จึงไม่คืน null ให้อาจารย์ไม่ว่าบอร์ดไหน — ด่าน null อย่างเดียวไม่พอ
-  action ที่แก้ข้อมูลต้องเช็ค `canEdit` เสมอ (อาจารย์ที่ไม่ได้เป็นสมาชิกได้ `canEdit: false`)
-  อาจารย์ที่เป็นสมาชิกอยู่แล้วใช้ role เดิม แค่ได้ `canReview: true` เพิ่ม
+**role ของผู้ใช้ทั้งระบบ (`User.role`)** — USER (นักศึกษา) / TEACHER / ADMIN ตั้งจากหน้า `/admin`
+อีเมลใน env `ADMIN_EMAILS` เป็น ADMIN เสมอ (ทางเข้าของแอดมินคนแรก และกันแอดมินล็อกตัวเองออก)
+`canTeach(role)` = TEACHER หรือ ADMIN, `canManageUsers(role)` = ADMIN (`lib/roles.ts`)
+
+- **อาจารย์เห็นเฉพาะบอร์ดที่ผูกกับรายวิชาที่ตัวเองเป็นเจ้าของ** (`board.course.teacherId`) ไม่ต้องถูกเชิญ
+  ได้ `canEdit: false` + `canReview: true` อาจารย์ที่เป็นสมาชิกอยู่แล้วใช้ role เดิม แค่ได้ `canReview` เพิ่ม
+  บอร์ดที่ไม่ผูกวิชาเป็นบอร์ดส่วนตัว ไม่มีอาจารย์คนไหนเห็น (แอดมินก็ไม่เห็นวิชาของอาจารย์คนอื่น)
   `accessibleBoardWhere()` ไม่นับอาจารย์ — dashboard/ค้นหา/ปฏิทินของอาจารย์ยังเป็นของตัวเอง
-  อาจารย์เข้าบอร์ดคนอื่นผ่านหน้า `/review`
+- **แอดมิน** (`app/(app)/admin/actions.ts` ผ่าน `editableTarget()`): แก้ตัวเองไม่ได้ แก้แอดมินจาก env ไม่ได้
+  และลดอาจารย์ที่ยังเป็นเจ้าของรายวิชาเป็นนักศึกษา/ระงับไม่ได้ (บอร์ดในวิชาจะค้างไม่มีใครอนุมัติ)
+- **รายวิชา**: เจ้าของบอร์ดผูกด้วยรหัสเข้าร่วม (`linkBoardToCourseAction`) ได้ครั้งเดียว
+  การถอนออกเป็นสิทธิ์ของอาจารย์ (`unlinkBoardAction`) — ไม่งั้นนักศึกษาถอนแล้วลบบอร์ดเพื่อลบคะแนนได้
+- **จัดการสมาชิก** (`setMemberRoleAction` / `removeMemberAction` เจ้าของเท่านั้น, `leaveBoardAction` สมาชิกเอง)
+  เอาออกแล้วต้องลบ `CardAssignee` ของคนนั้นในบอร์ดด้วย (`removeMembership()`)
 
 - **action ที่แก้ข้อมูลต้องเช็ค `access.canEdit` ไม่ใช่แค่ `access` ไม่เป็น null**
   เขียนใหม่แล้วลืมบรรทัดนี้ = viewer แก้ข้อมูลได้
@@ -201,8 +229,9 @@ prisma/
   เปลี่ยนค่านี้ = ผู้ใช้ทุกคนหลุด login
 - `BLOB_READ_WRITE_TOKEN` — โทเคนของ Vercel Blob สำหรับอัปโหลดไฟล์แนบ
   ไม่ใส่ก็ยังแนบ "ลิงก์" ได้ตามปกติ การอัปโหลดไฟล์จะคืน error ให้แสดงในรายการไฟล์
-- `TEACHER_EMAILS` — อีเมลอาจารย์คั่นด้วย comma (ไม่สนตัวพิมพ์) ไม่ใส่ = ไม่มีอาจารย์ในระบบ
-  seed สร้าง `teacher@kanban.dev` / `teacherpass123` ไว้ให้ แต่จะเป็นอาจารย์ก็ต่อเมื่ออยู่ในรายชื่อนี้
+- `ADMIN_EMAILS` — อีเมลแอดมินคั่นด้วย comma (ไม่สนตัวพิมพ์) เป็นแอดมินเสมอ แก้จากหน้าเว็บไม่ได้
+  **สร้างบัญชีของอีเมลนี้ไว้ก่อน** (seed สร้าง `admin@kanban.dev` ให้) ไม่งั้นใครสมัครอีเมลนี้ก่อนได้เป็นแอดมิน
+  อาจารย์ไม่ได้มาจาก env แล้ว (เลิกใช้ `TEACHER_EMAILS`) — ตั้ง role ที่หน้า `/admin`
 
 ---
 
@@ -211,7 +240,7 @@ prisma/
 `User` → `Board` (owner) → `List` → `Card`
 เสริมด้วย `BoardMember` (แชร์บอร์ด), `BoardInvite` (เชิญด้วย token), `BoardShareLink` (ลิงก์ทั่วไป),
 `Label`, `Priority`, `Checklist`/`ChecklistItem`, `Comment`, `Attachment`, `Activity`,
-`PointEvent` (ledger แต้ม), `CardReview` (ผลตรวจของอาจารย์)
+`PointEvent` (ledger แต้ม), `CardReview` (ผลตรวจของอาจารย์), `Course` (รายวิชา)
 
 จุดที่ต้องรู้:
 
@@ -227,9 +256,15 @@ prisma/
   (done/finish/เสร็จสิ้น ฯลฯ ตรงทั้งชื่อ) จะถูกตั้งธงให้อัตโนมัติ — รายชื่อนี้ต้องตรงกับ SQL ใน
   migration `review_workflow`
 - **`List.isReviewList`** — คอลัมน์ "กำลังตรวจสอบ" บอร์ดละ 1 คอลัมน์ และเป็นคอลัมน์เดียวกับ Done ไม่ได้
-  **บอร์ดที่มีคอลัมน์นี้ การ์ดจะ "เข้า" คอลัมน์เสร็จสิ้นได้ก็ต่อเมื่อ `canReview`** (`needsTeacherApproval()`
-  ใน `board/[id]/actions.ts`) นักศึกษาลากเข้าไม่ได้ ต้องให้อาจารย์อนุมัติที่ `/review`
-  บอร์ดที่ไม่มีคอลัมน์ตรวจทำงานแบบเดิมทุกอย่าง บอร์ดใหม่ได้ 4 คอลัมน์พร้อมธงทั้งสองตั้งแต่สร้าง
+  **บอร์ดที่ผูกรายวิชาและมีคอลัมน์นี้ (`access.requiresApproval`) การ์ดจะ "เข้า" คอลัมน์เสร็จสิ้นได้ก็ต่อเมื่อ
+  `canReview`** (`needsTeacherApproval()` ใน `board/[id]/actions.ts`) ต้องให้อาจารย์อนุมัติที่ `/review`
+  บอร์ดส่วนตัว (ไม่ผูกวิชา) ลากเข้าได้เองแม้มีคอลัมน์ตรวจ — ไม่มีอาจารย์ บังคับแล้วการ์ดจะค้างตลอดไป
+  บอร์ดใหม่ได้ 4 คอลัมน์พร้อมธงทั้งสองตั้งแต่สร้าง และตอนผูกวิชาจะสร้างคอลัมน์ที่ขาดให้
+- **`Board.courseId`** — บอร์ดละ 1 วิชา (`onDelete: SetNull`) **บอร์ดในรายวิชา: ลบบอร์ดไม่ได้,
+  ลบการ์ดที่มีผลตรวจไม่ได้, ลบคอลัมน์ที่มีการ์ดแบบนั้นไม่ได้** (กันคะแนนหายจาก CSV ของอาจารย์)
+- **`PointEvent.boardId` เป็น nullable (`onDelete: SetNull`)** — ลบบอร์ดแล้วแต้มยังอยู่ ("ได้แล้วไม่ริบคืน")
+- **`User.reviewsSeenAt`** — ผลตรวจที่ `updatedAt` ใหม่กว่านี้ = แจ้งเตือนที่ยังไม่อ่าน (`lib/notifications.ts`)
+  หน้า `/my-reviews` ตั้งค่านี้เป็น **เวลาที่ server render หน้า** ไม่ใช่เวลาที่กดเปิด
 - **`Card.submittedById` / `submittedAt`** — ตั้งตอนการ์ด "เข้า" คอลัมน์ตรวจ (`submissionFields()`)
   แต้มตอนอาจารย์อนุมัติไปที่คนนี้ (ไม่มี = `createdById`) และโบนัสทันกำหนดวัดจาก `submittedAt`
   ไม่ใช่เวลาที่อาจารย์กด — ตรวจช้าแล้วนักศึกษาต้องไม่เสียโบนัส
@@ -365,6 +400,14 @@ prisma/
 
 ### Server Actions
 
+- **React 19 รีเซ็ตฟอร์มหลัง action จบเสมอ** — ช่อง uncontrolled กลับเป็นค่า default ตอน mount
+  ฟอร์มที่ต้องคงค่าเมื่อ error ให้ใช้ controlled input (ดู `review-form.tsx`, `LinkCourseForm`)
+  และ dropdown ที่ auto-submit ต้องมี `key` ตามค่าที่บันทึก (ดู dropdown สิทธิ์สมาชิกใน `board-settings-dialog.tsx`)
+  ไม่งั้นบันทึกแล้วแต่หน้าจอเด้งกลับไปโชว์ค่าเดิม
+- ไฟล์ `"use server"` export ได้แค่ async function — schema ที่ใช้ร่วมกันวางไว้ใน `lib/` (เช่น `lib/password.ts`)
+- **ไฟล์ดาวน์โหลด (CSV) ทำผ่าน Server Action ที่คืน string** แล้ว client สร้าง Blob เอง
+  (`csv-download-button.tsx`) — ยังคงกติกา "ไม่มี API route นอกจากของ NextAuth"
+
 - ไฟล์ action ขึ้นต้นด้วย `"use server"` ตั้งชื่อลงท้ายด้วย `Action` (เช่น `createListAction`)
 - รับ `FormData` เมื่อผูกกับ `<form action={...}>` ตรง ๆ
   หรือรับ argument ปกติเมื่อเรียกจาก client component
@@ -402,7 +445,7 @@ npm run dev                  # dev server
 npm run build                # production build (เช็คว่า prerender ผ่านไหม)
 npm run lint                 # eslint
 npm test                     # unit test (Node test runner ผ่าน tsx ไม่มี framework เพิ่ม)
-npx prisma migrate dev       # สร้าง migration + generate client
+npx prisma migrate dev       # สร้าง migration (Prisma 7: รัน npx prisma generate ต่อด้วย)
 npx prisma studio            # เปิดดูข้อมูลในฐานข้อมูล
 npx prisma db seed           # ใส่ข้อมูลตัวอย่าง (รัน prisma/seed.ts พร้อมโหลด .env)
 ```
@@ -414,7 +457,7 @@ npx prisma db seed           # ใส่ข้อมูลตัวอย่า�
 
 - (แก้แล้ว) `kanban-board.tsx` เลิกใช้ `useEffect` sync props แล้ว เปลี่ยนไปเซ็ต state
   ระหว่าง render ตามแพตเทิร์นที่ React แนะนำ — `npm run lint` ตอนนี้ผ่านสะอาด ห้ามทำให้พังอีก
-- test ครอบเฉพาะฟังก์ชันบริสุทธิ์ (`lib/due.ts`, `lib/points.ts`, `lib/drag.ts`, `lib/teacher.ts` ฯลฯ)
+- test ครอบเฉพาะฟังก์ชันบริสุทธิ์ (`lib/due.ts`, `lib/points.ts`, `lib/drag.ts`, `lib/roles.ts`, `lib/csv.ts` ฯลฯ)
   ยังไม่มี integration test ที่แตะ DB หรือ Server Action — ตรรกะสิทธิ์ (`canEdit`/`canReview`)
   และด่านอาจารย์อนุมัติจึงยังต้องทดสอบด้วยมือ
 - `prisma/seed.ts` ไม่โหลด `.env` เอง ต้องรันผ่าน `npx prisma db seed` (`npx tsx prisma/seed.ts`
@@ -425,3 +468,10 @@ npx prisma db seed           # ใส่ข้อมูลตัวอย่า�
 - ตอนตั้งคอลัมน์เสร็จสิ้น การ์ดที่อยู่ในคอลัมน์นั้นอยู่แล้วจะถูกมาร์กว่าเสร็จ แต่ไม่ได้แต้มย้อนหลัง
   (ไม่รู้ว่าใครเป็นคนทำ) และ `prisma/seed.ts` ใช้ `update: {}` จึงไม่เติม `dueDate`
   ให้การ์ด seed ที่มีอยู่ก่อนแล้ว
+- **เปลี่ยน/ตั้งรหัสผ่านใหม่แล้ว session เดิมไม่หลุด** (JWT ล้วน ไม่มีตาราง session ให้ลบ)
+  การระงับบัญชีเป็นทางเดียวที่ตัดผู้ใช้ที่ล็อกอินค้างออกได้ทันที
+- **`prisma migrate dev` ผ่าน pooler ของ Neon (`-pooler` ใน host) อาจค้าง advisory lock** แล้ว migrate
+  ครั้งถัดไป timeout (P1002) — ให้รัน migrate ด้วย connection ตรง (เอา `-pooler` ออกจาก host ชั่วคราว)
+  ถ้าค้างแล้ว ปิด backend ที่ idle และถือ lock `72707369` อยู่ (ดู `pg_locks`)
+- dev server ที่เปิดค้างไว้ถือ Prisma Client ตัวเก่าไว้ใน `globalThis` (`lib/prisma.ts`) — แก้ schema แล้ว
+  ต้องรีสตาร์ต `npm run dev` ไม่งั้นฟิลด์ใหม่ (เช่น `role`) เป็น `undefined`

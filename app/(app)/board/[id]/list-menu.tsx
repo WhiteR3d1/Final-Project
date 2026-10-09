@@ -14,6 +14,7 @@ export function ListMenu({
   listName,
   isDoneList,
   isReviewList,
+  deleteLocked,
   onEdit,
   onInsert,
 }: {
@@ -21,6 +22,8 @@ export function ListMenu({
   listName: string;
   isDoneList: boolean;
   isReviewList: boolean;
+  /** บอร์ดในรายวิชาและมีการ์ดที่อาจารย์ตรวจแล้ว — ลบแล้วคะแนนหาย (ด่านจริงอยู่ที่ deleteListAction) */
+  deleteLocked: boolean;
   onEdit: () => void;
   onInsert: (side: "before" | "after") => void;
 }) {
@@ -81,19 +84,25 @@ export function ListMenu({
               </form>
             )}
 
-            <form action={deleteListAction}>
-              <input type="hidden" name="listId" value={listId} />
-              <ConfirmSubmitButton
-                className={`${itemClass} hover:text-danger`}
-                confirmClassName="bg-danger/15 text-danger flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium"
-                confirmLabel="กดอีกครั้งเพื่อลบคอลัมน์"
-              >
-                <IconTrash size={14} /> ลบคอลัมน์นี้
-              </ConfirmSubmitButton>
-            </form>
+            {deleteLocked ? (
+              <p className="text-muted px-2.5 py-1.5 text-[11px] leading-4">
+                ลบคอลัมน์นี้ไม่ได้ — มีการ์ดที่อาจารย์ตรวจแล้ว (คะแนนจะหาย)
+              </p>
+            ) : (
+              <form action={deleteListAction}>
+                <input type="hidden" name="listId" value={listId} />
+                <ConfirmSubmitButton
+                  className={`${itemClass} hover:text-danger`}
+                  confirmClassName="bg-danger/15 text-danger flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium"
+                  confirmLabel="กดอีกครั้งเพื่อลบคอลัมน์"
+                >
+                  <IconTrash size={14} /> ลบคอลัมน์นี้
+                </ConfirmSubmitButton>
+              </form>
+            )}
 
             <p className="text-muted border-line mt-1 border-t px-2.5 py-2 text-[11px] leading-4">
-              คอลัมน์เสร็จสิ้นอยู่ขวาสุดเสมอ ลากการ์ดเข้าไปแล้วได้แต้ม ถ้าบอร์ดมีคอลัมน์ตรวจสอบ
+              คอลัมน์เสร็จสิ้นอยู่ขวาสุดเสมอ ลากการ์ดเข้าไปแล้วได้แต้ม ถ้าบอร์ดผูกรายวิชาและมีคอลัมน์ตรวจสอบ
               การ์ดจะเข้าคอลัมน์เสร็จสิ้นได้เมื่ออาจารย์อนุมัติเท่านั้น
             </p>
           </div>

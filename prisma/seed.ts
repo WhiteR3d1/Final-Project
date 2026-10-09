@@ -1,11 +1,14 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma";
-import { ActivityType } from "../app/generated/prisma/enums";
+import { ActivityType, UserRole } from "../app/generated/prisma/enums";
 
 const DEMO_PASSWORD = "demopass123";
-// บัญชีอาจารย์ตัวอย่าง — จะเป็นอาจารย์จริงก็ต่อเมื่ออีเมลนี้อยู่ใน TEACHER_EMAILS ของ .env
+// บัญชีตัวอย่าง — รหัสพวกนี้อยู่ใน repo สาธารณะ ห้ามใช้กับระบบที่เปิดให้คนอื่นใช้จริง
 const TEACHER_EMAIL = "teacher@kanban.dev";
 const TEACHER_PASSWORD = "teacherpass123";
+// เป็นแอดมินก็ต่อเมื่ออีเมลนี้อยู่ใน ADMIN_EMAILS ของ .env (seed สร้างบัญชีไว้ก่อน กันคนอื่นสมัครอีเมลนี้ไปก่อน)
+const ADMIN_EMAIL = "admin@kanban.dev";
+const ADMIN_PASSWORD = "adminpass123";
 
 async function main() {
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
@@ -22,22 +25,42 @@ async function main() {
 
   const teacher = await prisma.user.upsert({
     where: { email: TEACHER_EMAIL },
-    update: { passwordHash: await bcrypt.hash(TEACHER_PASSWORD, 10) },
+    update: { passwordHash: await bcrypt.hash(TEACHER_PASSWORD, 10), role: UserRole.TEACHER },
     create: {
       email: TEACHER_EMAIL,
       name: "อาจารย์ตัวอย่าง",
+      role: UserRole.TEACHER,
       passwordHash: await bcrypt.hash(TEACHER_PASSWORD, 10),
     },
   });
 
+  const admin = await prisma.user.upsert({
+    where: { email: ADMIN_EMAIL },
+    update: { passwordHash: await bcrypt.hash(ADMIN_PASSWORD, 10) },
+    create: {
+      email: ADMIN_EMAIL,
+      name: "ผู้ดูแลระบบ",
+      passwordHash: await bcrypt.hash(ADMIN_PASSWORD, 10),
+    },
+  });
+
+  // รายวิชาตัวอย่างของอาจารย์ — รหัสตายตัวให้ทดสอบซ้ำได้ (ใช้แค่ตัวอักษรที่ generateJoinCode ใช้)
+  const course = await prisma.course.upsert({
+    where: { id: "seed-course-1" },
+    update: { teacherId: teacher.id },
+    create: { id: "seed-course-1", name: "วิชาตัวอย่าง", joinCode: "KANBAN", teacherId: teacher.id },
+  });
+
   const board = await prisma.board.upsert({
     where: { id: "seed-board-1" },
-    update: {},
+    // update ต้องมี courseId ด้วย ไม่งั้นบอร์ดที่ seed ไว้ก่อนมีรายวิชาจะไม่ถูกผูก
+    update: { courseId: course.id },
     create: {
       id: "seed-board-1",
       name: "Study Plan",
       description: "บอร์ดตัวอย่างสำหรับทดสอบระบบ",
       ownerId: user.id,
+      courseId: course.id,
     },
   });
 
@@ -141,7 +164,8 @@ async function main() {
     cards: cards.map((c) => c.title),
   });
   console.log(`Login with: ${user.email} / ${DEMO_PASSWORD}`);
-  console.log(`Teacher: ${teacher.email} / ${TEACHER_PASSWORD} (ต้องอยู่ใน TEACHER_EMAILS ของ .env)`);
+  console.log(`Teacher: ${teacher.email} / ${TEACHER_PASSWORD} — รายวิชา "${course.name}" รหัส ${course.joinCode}`);
+  console.log(`Admin: ${admin.email} / ${ADMIN_PASSWORD} (ต้องอยู่ใน ADMIN_EMAILS ของ .env)`);
 }
 
 main()

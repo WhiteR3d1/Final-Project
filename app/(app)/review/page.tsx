@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/dal";
-import { isTeacherEmail } from "@/lib/teacher";
+import { canTeach } from "@/lib/roles";
 import { boardColor } from "@/lib/boards";
 import { formatDueThai, isOnTime } from "@/lib/due";
 import type { Prisma } from "@/app/generated/prisma/client";
@@ -49,33 +49,45 @@ const reviewCardSelect = {
 type ReviewCard = Prisma.CardGetPayload<{ select: typeof reviewCardSelect }>;
 
 /**
- * หน้าตรวจงานของอาจารย์ — การ์ดในคอลัมน์ "กำลังตรวจสอบ" จากทุกบอร์ดในระบบ
+ * หน้าตรวจงานของอาจารย์ — การ์ดในคอลัมน์ "กำลังตรวจสอบ" ของบอร์ดในรายวิชาที่ตัวเองสอน
  * อาจารย์ไม่ต้องถูกเชิญเข้าบอร์ด (ดู canReview ใน lib/board-access.ts)
  */
 export default async function ReviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string; board?: string }>;
+  searchParams: Promise<{ tab?: string; course?: string; board?: string }>;
 }) {
   const user = await getCurrentUser();
   // ไม่บอกว่ามีหน้านี้อยู่ เหมือนบอร์ดที่ไม่มีสิทธิ์เข้า
-  if (!isTeacherEmail(user.email)) notFound();
+  if (!canTeach(user.role)) notFound();
 
-  const { tab: rawTab, board: boardFilter } = await searchParams;
+  const { tab: rawTab, course: courseFilter, board: boardFilter } = await searchParams;
   const tab = rawTab === "done" ? "done" : "pending";
 
-  const boards = await prisma.board.findMany({
-    where: { lists: { some: { isReviewList: true } } },
+  // เฉพาะวิชาที่ตัวเองสอน — ตัวกรองจาก URL เลือกได้แค่ในชุดนี้ จะใส่ id ของวิชาคนอื่นมาก็ไม่มีผล
+  const courses = await prisma.course.findMany({
+    where: { teacherId: user.id },
     orderBy: { name: "asc" },
-    select: { id: true, name: true, color: true },
+    select: {
+      id: true,
+      name: true,
+      boards: { orderBy: { name: "asc" }, select: { id: true, name: true, color: true } },
+    },
   });
+  const activeCourse = courseFilter ? courses.find((course) => course.id === courseFilter) : undefined;
+  const boards = activeCourse ? activeCourse.boards : courses.flatMap((course) => course.boards);
   const activeBoard = boardFilter ? boards.find((board) => board.id === boardFilter) : undefined;
-  const inBoard = activeBoard ? { boardId: activeBoard.id } : {};
 
-  const pendingWhere = { list: { isReviewList: true, ...inBoard } } satisfies Prisma.CardWhereInput;
+  const inScope = {
+    course: { teacherId: user.id },
+    ...(activeCourse ? { courseId: activeCourse.id } : {}),
+    ...(activeBoard ? { id: activeBoard.id } : {}),
+  } satisfies Prisma.BoardWhereInput;
+
+  const pendingWhere = { list: { isReviewList: true, board: inScope } } satisfies Prisma.CardWhereInput;
   const doneWhere = {
     review: { isNot: null },
-    list: { isReviewList: false, ...inBoard },
+    list: { isReviewList: false, board: inScope },
   } satisfies Prisma.CardWhereInput;
 
   const [pendingCount, doneCount, cards] = await Promise.all([
@@ -93,8 +105,16 @@ export default async function ReviewPage({
     }),
   ]);
 
-  const href = (nextTab: string, boardId?: string) =>
-    `/review?tab=${nextTab}${boardId ? `&board=${boardId}` : ""}`;
+  const href = (filters: { tab?: string; course?: string; board?: string }) => {
+    const params = new URLSearchParams({ tab: filters.tab ?? tab });
+    if (filters.course) params.set("course", filters.course);
+    if (filters.board) params.set("board", filters.board);
+    return `/review?${params}`;
+  };
+  const chipClass = (active: boolean) =>
+    `flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs ${
+      active ? "bg-panel-2 text-text font-medium" : "text-muted hover:text-text"
+    }`;
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-5">
@@ -102,7 +122,7 @@ export default async function ReviewPage({
         <div>
           <h1 className="text-text text-xl font-bold tracking-tight">ตรวจงาน</h1>
           <p className="text-muted mt-0.5 text-xs">
-            การ์ดที่นักศึกษาลากเข้าคอลัมน์ &ldquo;กำลังตรวจสอบ&rdquo; จากทุกบอร์ด — อนุมัติแล้วการ์ดจะเข้าคอลัมน์เสร็จสิ้นและนักศึกษาได้แต้ม
+            การ์ดที่นักศึกษาลากเข้าคอลัมน์ &ldquo;กำลังตรวจสอบ&rdquo; ในรายวิชาของคุณ — อนุมัติแล้วการ์ดจะเข้าคอลัมน์เสร็จสิ้นและนักศึกษาได้แต้ม
           </p>
         </div>
 
@@ -113,7 +133,7 @@ export default async function ReviewPage({
           ].map((item) => (
             <Link
               key={item.key}
-              href={href(item.key, activeBoard?.id)}
+              href={href({ tab: item.key, course: activeCourse?.id, board: activeBoard?.id })}
               aria-current={tab === item.key ? "page" : undefined}
               className={`rounded-lg px-3 py-1.5 ${
                 tab === item.key ? "bg-panel text-text font-semibold shadow-sm" : "text-muted hover:text-text"
@@ -125,41 +145,53 @@ export default async function ReviewPage({
         </nav>
       </header>
 
-      {boards.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Link
-            href={href(tab)}
-            className={`rounded-lg px-2.5 py-1 text-xs ${
-              activeBoard ? "text-muted hover:text-text" : "bg-panel-2 text-text font-medium"
-            }`}
-          >
-            ทุกบอร์ด
-          </Link>
-          {boards.map((board) => (
-            <Link
-              key={board.id}
-              href={href(tab, board.id)}
-              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs ${
-                activeBoard?.id === board.id
-                  ? "bg-panel-2 text-text font-medium"
-                  : "text-muted hover:text-text"
-              }`}
-            >
-              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: boardColor(board) }} />
-              {board.name}
+      {courses.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Link href={href({})} className={chipClass(!activeCourse && !activeBoard)}>
+              ทุกวิชา
             </Link>
-          ))}
+            {courses.map((course) => (
+              <Link key={course.id} href={href({ course: course.id })} className={chipClass(activeCourse?.id === course.id)}>
+                {course.name}
+              </Link>
+            ))}
+          </div>
+          {boards.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {boards.map((board) => (
+                <Link
+                  key={board.id}
+                  href={href({ course: activeCourse?.id, board: board.id })}
+                  className={chipClass(activeBoard?.id === board.id)}
+                >
+                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: boardColor(board) }} />
+                  {board.name}
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
       {cards.length === 0 ? (
         <Panel>
           <p className="text-muted py-8 text-center text-sm">
-            {tab === "pending"
-              ? boards.length === 0
-                ? "ยังไม่มีบอร์ดไหนตั้งคอลัมน์ตรวจสอบ"
-                : "ไม่มีงานรอตรวจ 🎉"
-              : "ยังไม่มีงานที่ตรวจแล้ว"}
+            {courses.length === 0 ? (
+              <>
+                ยังไม่มีรายวิชา —{" "}
+                <Link href="/courses" className="text-accent underline">
+                  สร้างรายวิชา
+                </Link>{" "}
+                แล้วบอกรหัสเข้าร่วมกับนักศึกษา
+              </>
+            ) : boards.length === 0 ? (
+              "ยังไม่มีนักศึกษาส่งบอร์ดเข้ารายวิชาของคุณ"
+            ) : tab === "pending" ? (
+              "ไม่มีงานรอตรวจ 🎉"
+            ) : (
+              "ยังไม่มีงานที่ตรวจแล้ว"
+            )}
           </p>
         </Panel>
       ) : (

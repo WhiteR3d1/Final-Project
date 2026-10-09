@@ -8,7 +8,16 @@ import { TaskRow } from "./task-row";
 export type DueFilter = "all" | "mine";
 
 /** รายการงานที่มีกำหนดส่งจากทุกบอร์ดที่ผู้ใช้เข้าถึงได้ จัดกลุ่มตามความเร่งด่วน */
-export async function DueCards({ userId, filter }: { userId: string; filter: DueFilter }) {
+export async function DueCards({
+  userId,
+  filter,
+  keepParams = {},
+}: {
+  userId: string;
+  filter: DueFilter;
+  /** searchParams ของแผงอื่นบนหน้าแรก (เช่นตัวเลือกของแผงอันดับ) — คงไว้ตอนสลับตัวกรอง */
+  keepParams?: Record<string, string | undefined>;
+}) {
   const cards = await prisma.card.findMany({
     where: {
       isCompleted: false,
@@ -39,8 +48,8 @@ export async function DueCards({ userId, filter }: { userId: string; filter: Due
       subtitle={withDue.length > 0 ? `ค้างอยู่ ${withDue.length} งาน` : undefined}
       action={
         <div className="bg-panel-2 flex gap-1 rounded-lg p-0.5 text-xs">
-          <FilterLink current={filter} value="all" label="ทั้งหมด" />
-          <FilterLink current={filter} value="mine" label="ของฉัน" />
+          <FilterLink current={filter} value="all" label="ทั้งหมด" keepParams={keepParams} />
+          <FilterLink current={filter} value="mine" label="ของฉัน" keepParams={keepParams} />
         </div>
       }
     >
@@ -85,16 +94,21 @@ function FilterLink({
   current,
   value,
   label,
+  keepParams,
 }: {
   current: DueFilter;
   value: DueFilter;
   label: string;
+  keepParams: Record<string, string | undefined>;
 }) {
   const isActive = current === value;
+  const params = new URLSearchParams({ due: value });
+  for (const [key, keep] of Object.entries(keepParams)) if (keep) params.set(key, keep);
 
   return (
     <Link
-      href={`/?due=${value}`}
+      href={`/?${params}`}
+      scroll={false}
       className={`rounded-md px-2.5 py-1 ${
         isActive ? "bg-panel text-text font-medium shadow-sm" : "text-muted hover:text-text"
       }`}

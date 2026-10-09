@@ -309,6 +309,17 @@ export function KanbanBoard({
                 dragDisabled={dragDisabled}
                 canEdit={canEdit}
                 deleteLocked={inCourse && list.cards.some((card) => card.review)}
+                // ปุ่ม + ระหว่างคอลัมน์: มีเฉพาะช่องที่อยู่ระหว่างสองคอลัมน์จริง ไม่มีทางขวาของคอลัมน์เสร็จสิ้น
+                // (อยู่ขวาสุดเสมอ) และซ่อนระหว่างลาก ไม่ให้เกะกะเป้าที่ปล่อย
+                insertAfterLabel={
+                  canEdit &&
+                  !list.isDoneList &&
+                  listIndex < visibleLists.length - 1 &&
+                  !activeCard &&
+                  !activeList
+                    ? `เพิ่มคอลัมน์ระหว่าง ${list.name} กับ ${visibleLists[listIndex + 1].name}`
+                    : undefined
+                }
                 onEdit={() => setListDialog({ mode: "edit", listId: list.id })}
                 onInsert={(side) => setListDialog({ mode: "new", anchorId: list.id, side })}
                 onAddCard={() => setAddCardListId(list.id)}
@@ -425,6 +436,7 @@ function SortableList({
   dragDisabled,
   canEdit,
   deleteLocked,
+  insertAfterLabel,
   onEdit,
   onInsert,
   onAddCard,
@@ -435,6 +447,8 @@ function SortableList({
   dragDisabled: boolean;
   canEdit: boolean;
   deleteLocked: boolean;
+  /** มีค่า = โชว์ปุ่ม + ในช่องว่างทางขวาของคอลัมน์นี้ (ค่าคือ aria-label) */
+  insertAfterLabel?: string;
   onEdit: () => void;
   onInsert: (side: "before" | "after") => void;
   onAddCard: () => void;
@@ -465,8 +479,21 @@ function SortableList({
         transition,
         opacity: isDragging ? 0.4 : 1,
       }}
-      className="group/list border-line bg-panel-2 flex h-full w-72 shrink-0 flex-col gap-2 rounded-2xl border p-3"
+      className="group/list border-line bg-panel-2 relative flex h-full w-72 shrink-0 flex-col gap-2 rounded-2xl border p-3"
     >
+      {/* อยู่ในคอลัมน์แต่ยื่นไปกลางช่องว่าง gap-4 — ถ้าวางเป็น element แยกระหว่างคอลัมน์
+          ใน SortableContext ตัวคำนวณการเลื่อนตอนลาก (horizontalListSortingStrategy) จะเพี้ยน */}
+      {insertAfterLabel && (
+        <button
+          type="button"
+          onClick={() => onInsert("after")}
+          aria-label={insertAfterLabel}
+          title={insertAfterLabel}
+          className="border-line bg-panel text-muted hover:text-accent hover:border-accent focus-visible:text-accent absolute top-1/2 -right-[22px] z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border opacity-60 shadow-sm transition hover:opacity-100 focus-visible:opacity-100"
+        >
+          <IconPlus size={14} />
+        </button>
+      )}
       <div className="flex shrink-0 items-center gap-1.5">
         {/* ปุ่มจับลากยังอยู่เพื่อการลากด้วยคีย์บอร์ด (เมาส์ลากที่พื้นว่างของคอลัมน์ก็ได้) */}
         {canEdit && (

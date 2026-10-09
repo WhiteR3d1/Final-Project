@@ -13,6 +13,7 @@ import { IconChecklist, IconFile, IconLink } from "@/app/components/ui/icons";
 import { CardReviewResult } from "../board/[id]/card-review-result";
 import { cardReviewSelect, publicUserSelect } from "../board/[id]/types";
 import { ReviewForm } from "./review-form";
+import { ReviewedPanel } from "./reviewed-panel";
 
 const SUBMITTED_AT_FORMAT = new Intl.DateTimeFormat("th-TH", {
   timeZone: "Asia/Bangkok",
@@ -30,6 +31,7 @@ const reviewCardSelect = {
   list: {
     select: {
       name: true,
+      isReviewList: true,
       board: {
         select: { id: true, name: true, color: true, lists: { where: { isDoneList: true }, select: { id: true } } },
       },
@@ -214,6 +216,8 @@ function ReviewCardItem({ card }: { card: ReviewCard }) {
   const doneItems = items.filter((item) => item.isCompleted).length;
   const onTime =
     card.dueDate && card.submittedAt ? isOnTime(card.dueDate, card.submittedAt) : null;
+  // ตรวจแล้วและไม่ได้รอตรวจรอบใหม่ (การ์ดที่ส่งกลับแก้แล้วส่งตรวจใหม่จะกลับมาอยู่ในคอลัมน์ตรวจ)
+  const reviewed = Boolean(card.review) && !card.list.isReviewList;
 
   return (
     <Panel bodyClassName="grid grid-cols-1 gap-5 md:grid-cols-[1fr_280px]">
@@ -287,17 +291,27 @@ function ReviewCardItem({ card }: { card: ReviewCard }) {
           </ul>
         )}
 
-        {card.review && <CardReviewResult review={card.review} />}
+        {/* การ์ดที่ส่งตรวจใหม่หลังถูกส่งกลับแก้ไข — โชว์ผลตรวจรอบก่อนไว้ให้อาจารย์เทียบ */}
+        {card.review && !reviewed && <CardReviewResult review={card.review} />}
       </div>
 
       <aside className="border-line md:border-l md:pl-5">
-        <ReviewForm
-          key={card.review?.updatedAt.toISOString() ?? "new"}
-          cardId={card.id}
-          defaultScore={card.review?.score ?? null}
-          defaultFeedback={card.review?.feedback ?? null}
-          canApprove={board.lists.length > 0}
-        />
+        {reviewed && card.review ? (
+          <ReviewedPanel
+            key={card.review.updatedAt.toISOString()}
+            cardId={card.id}
+            review={card.review}
+            canApprove={board.lists.length > 0}
+          />
+        ) : (
+          <ReviewForm
+            key={card.review?.updatedAt.toISOString() ?? "new"}
+            cardId={card.id}
+            defaultScore={card.review?.score ?? null}
+            defaultFeedback={card.review?.feedback ?? null}
+            canApprove={board.lists.length > 0}
+          />
+        )}
       </aside>
     </Panel>
   );

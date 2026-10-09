@@ -24,9 +24,11 @@ import { BoardNavLink, NavLink } from "./nav-link";
  */
 export async function Sidebar({ variant = "fixed" }: { variant?: "fixed" | "drawer" }) {
   const user = await getCurrentUser();
-  const { owned, shared } = await getUserBoards(user.id);
   const isTeacher = canTeach(user.role);
-  const { pendingReviews, unreadReviews } = await getSidebarCounts(user);
+  const [{ owned, shared }, { pendingReviews, unreadReviews }] = await Promise.all([
+    getUserBoards(user.id),
+    getSidebarCounts(user),
+  ]);
 
   return (
     <aside

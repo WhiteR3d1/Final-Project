@@ -22,55 +22,57 @@ export default async function BoardPage({ params }: { params: Promise<{ id: stri
   const access = await assertBoardAccess(id, user);
   if (!access) notFound();
 
-  const board = await prisma.board.findUnique({
-    where: { id },
-    include: {
-      owner: { select: publicUserSelect },
-      members: { include: { user: { select: publicUserSelect } } },
-      labels: true,
-      priorities: { orderBy: { order: "asc" } },
-      invites: {
-        where: { status: InviteStatus.PENDING },
-        orderBy: { createdAt: "desc" },
-      },
-      shareLink: true,
-      course: { select: { name: true, teacher: { select: publicUserSelect } } },
-      lists: {
-        orderBy: { position: "asc" },
-        include: {
-          cards: {
-            orderBy: { position: "asc" },
-            include: {
-              checklists: {
-                orderBy: { position: "asc" },
-                include: { items: { orderBy: { position: "asc" } } },
+  // สามก้อนนี้ไม่ขึ้นต่อกัน — ยิงพร้อมกันแทน await ทีละก้อน (แต่ละ round trip ไป DB มีราคา)
+  const [board, gameSummary, activities] = await Promise.all([
+    prisma.board.findUnique({
+      where: { id },
+      include: {
+        owner: { select: publicUserSelect },
+        members: { include: { user: { select: publicUserSelect } } },
+        labels: true,
+        priorities: { orderBy: { order: "asc" } },
+        invites: {
+          where: { status: InviteStatus.PENDING },
+          orderBy: { createdAt: "desc" },
+        },
+        shareLink: true,
+        course: { select: { name: true, teacher: { select: publicUserSelect } } },
+        lists: {
+          orderBy: { position: "asc" },
+          include: {
+            cards: {
+              orderBy: { position: "asc" },
+              include: {
+                checklists: {
+                  orderBy: { position: "asc" },
+                  include: { items: { orderBy: { position: "asc" } } },
+                },
+                comments: {
+                  orderBy: { createdAt: "asc" },
+                  include: { user: { select: publicUserSelect } },
+                },
+                labels: { include: { label: true } },
+                assignees: { include: { user: { select: publicUserSelect } } },
+                priority: true,
+                attachments: { orderBy: { createdAt: "asc" } },
+                review: { select: cardReviewSelect },
               },
-              comments: {
-                orderBy: { createdAt: "asc" },
-                include: { user: { select: publicUserSelect } },
-              },
-              labels: { include: { label: true } },
-              assignees: { include: { user: { select: publicUserSelect } } },
-              priority: true,
-              attachments: { orderBy: { createdAt: "asc" } },
-              review: { select: cardReviewSelect },
             },
           },
         },
       },
-    },
-  });
+    }),
+    getBoardGameSummary(id, user.id),
+    prisma.activity.findMany({
+      where: { boardId: id },
+      orderBy: { createdAt: "desc" },
+      take: 12,
+    }),
+  ]);
 
   if (!board) notFound();
 
-  const gameSummary = await getBoardGameSummary(id, user.id);
   const doneList = board.lists.find((list) => list.isDoneList);
-
-  const activities = await prisma.activity.findMany({
-    where: { boardId: id },
-    orderBy: { createdAt: "desc" },
-    take: 12,
-  });
 
   const boardMembers = [
     board.owner,

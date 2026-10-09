@@ -69,3 +69,29 @@ export function streakFromDayKeys(dayKeys: Set<string>, now: Date = new Date()):
 
   return streak;
 }
+
+export type RankedEntry<T> = T & { rank: number; isMe: boolean };
+
+/**
+ * จัดอันดับตามแต้ม (มากไปน้อย) — แต้มเท่ากันได้อันดับเดียวกันแบบ 1, 2, 2, 4 แล้วเรียงตามชื่อให้ลำดับนิ่ง
+ * คืนแค่ `limit` อันดับแรก + แถวของ `meId` ต่อท้ายถ้าไม่ติด (แผงหน้าแรกมีที่จำกัด แต่ต้องเห็นอันดับตัวเองเสมอ)
+ */
+export function rankEntries<T extends { userId: string; name: string; points: number }>(
+  entries: T[],
+  meId: string,
+  limit = 5
+): RankedEntry<T>[] {
+  const sorted = [...entries].sort(
+    (a, b) => b.points - a.points || a.name.localeCompare(b.name, "th")
+  );
+
+  const ranked = sorted.map((entry) => ({
+    ...entry,
+    rank: sorted.findIndex((other) => other.points === entry.points) + 1,
+    isMe: entry.userId === meId,
+  }));
+
+  const top = ranked.slice(0, limit);
+  const me = ranked.find((entry) => entry.isMe);
+  return me && !top.includes(me) ? [...top, me] : top;
+}

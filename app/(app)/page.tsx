@@ -6,14 +6,15 @@ import { OverviewPanel } from "@/app/components/dashboard/overview-panel";
 import { WeeklyChart } from "@/app/components/dashboard/weekly-chart";
 import { MonthProgress } from "@/app/components/dashboard/month-progress";
 import { BoardCards } from "@/app/components/dashboard/board-cards";
+import { Leaderboard } from "@/app/components/dashboard/leaderboard";
 
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ due?: string }>;
+  searchParams: Promise<{ due?: string; lb?: string; lbp?: string }>;
 }) {
   const user = await getCurrentUser();
-  const { due } = await searchParams;
+  const { due, lb, lbp } = await searchParams;
   const dueFilter: DueFilter = due === "mine" ? "mine" : "all";
 
   const today = new Intl.DateTimeFormat("th-TH", {
@@ -50,9 +51,16 @@ export default async function DashboardPage({
           <GameStats userId={user.id} />
         </div>
         <div className="lg:col-span-2">
-          <DueCards userId={user.id} filter={dueFilter} />
+          <DueCards userId={user.id} filter={dueFilter} keepParams={{ lb, lbp }} />
         </div>
       </div>
+
+      <Leaderboard
+        userId={user.id}
+        courseId={lb}
+        period={lbp === "week" ? "week" : "all"}
+        due={due === "mine" ? "mine" : undefined}
+      />
 
       <BoardCards userId={user.id} />
     </div>

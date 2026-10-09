@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { LEVEL_TITLES, levelFromPoints, pointsToReachLevel, streakFromDayKeys } from "./points";
+import {
+  LEVEL_TITLES,
+  levelFromPoints,
+  pointsToReachLevel,
+  rankEntries,
+  streakFromDayKeys,
+} from "./points";
 
 describe("pointsToReachLevel", () => {
   it("เลเวล 1 เริ่มที่ 0 แต้ม และช่วงห่างกว้างขึ้นเรื่อย ๆ", () => {
@@ -82,5 +88,51 @@ describe("streakFromDayKeys", () => {
     const firstOfMonth = new Date("2026-09-01T05:00:00Z");
     const keys = new Set(["2026-09-01", "2026-08-31", "2026-08-30"]);
     assert.equal(streakFromDayKeys(keys, firstOfMonth), 3);
+  });
+});
+
+describe("rankEntries", () => {
+  const people = (points: number[]) =>
+    points.map((value, index) => ({ userId: `u${index}`, name: `คน${index}`, points: value }));
+
+  it("เรียงแต้มมากไปน้อย", () => {
+    const rows = rankEntries(people([5, 30, 10]), "u0");
+    assert.deepEqual(rows.map((row) => [row.userId, row.rank]), [["u1", 1], ["u2", 2], ["u0", 3]]);
+  });
+
+  it("แต้มเท่ากันได้อันดับเดียวกัน แล้วอันดับถัดไปข้ามไป (1, 2, 2, 4)", () => {
+    const rows = rankEntries(people([40, 20, 20, 10]), "u0");
+    assert.deepEqual(rows.map((row) => row.rank), [1, 2, 2, 4]);
+  });
+
+  it("แต้มเท่ากันเรียงตามชื่อ ลำดับจึงไม่สลับไปมาทุกครั้งที่โหลด", () => {
+    const rows = rankEntries(
+      [
+        { userId: "b", name: "สมหญิง", points: 10 },
+        { userId: "a", name: "กมล", points: 10 },
+      ],
+      "x"
+    );
+    assert.deepEqual(rows.map((row) => row.userId), ["a", "b"]);
+  });
+
+  it("ตัดเหลือ limit อันดับแรก แต่ต่อแถวของฉันท้ายสุดถ้าไม่ติด", () => {
+    const rows = rankEntries(people([60, 50, 40, 30, 20, 10, 5]), "u6", 5);
+    assert.equal(rows.length, 6);
+    assert.deepEqual(rows.at(-1), { userId: "u6", name: "คน6", points: 5, rank: 7, isMe: true });
+  });
+
+  it("ฉันติดอันดับต้น ๆ อยู่แล้ว ไม่ซ้ำแถว", () => {
+    const rows = rankEntries(people([60, 50, 40, 30, 20, 10]), "u1", 5);
+    assert.equal(rows.length, 5);
+    assert.equal(rows.filter((row) => row.isMe).length, 1);
+  });
+
+  it("คนที่ไม่ได้อยู่ในรายชื่อ (เช่นอาจารย์) ไม่มีแถวของตัวเองต่อท้าย", () => {
+    assert.equal(rankEntries(people([3, 2, 1]), "teacher", 2).length, 2);
+  });
+
+  it("ไม่มีใครเลย = ว่าง", () => {
+    assert.deepEqual(rankEntries([], "u0"), []);
   });
 });

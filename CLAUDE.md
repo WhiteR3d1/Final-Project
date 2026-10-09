@@ -49,6 +49,7 @@ auth.ts                       # NextAuth instance หลัก — export { hand
 auth.config.ts                # config ส่วนที่ไม่แตะ DB ใช้ร่วมกันระหว่าง auth.ts กับ proxy.ts
 proxy.ts                      # กันหน้าที่ต้องล็อกอิน (เดิมชื่อ middleware.ts)
 prisma.config.ts              # config ของ Prisma CLI
+vercel.json                   # regions: ["sin1"] — function รันที่สิงคโปร์ข้าง Neon (ดูหัวข้อ Deploy / ความเร็ว)
 
 app/
   layout.tsx                  # root layout (ฟอนต์ Geist + Noto Sans Thai, ครอบทุกหน้า)
@@ -65,6 +66,7 @@ app/
 
   (app)/                      # route group ของหน้าที่ต้องล็อกอิน — ไม่เปลี่ยน URL
     layout.tsx                # โครงแอป: Sidebar + Topbar + <main>
+    loading.tsx               # skeleton ระหว่างรอ render (board/[id]/loading.tsx มีของตัวเอง)
     page.tsx                  # Dashboard                    → "/"
     search/page.tsx           # ผลการค้นหาข้ามบอร์ด (?q=)     → "/search"
     calendar/page.tsx         # ปฏิทินกำหนดส่ง (?m=, ?board=) → "/calendar"
@@ -78,6 +80,7 @@ app/
       page.tsx                # การ์ดในคอลัมน์ตรวจของบอร์ดในวิชาตัวเอง — ไม่ใช่อาจารย์ = notFound()
       actions.ts              # reviewCardAction: อนุมัติ (คะแนน + ย้ายเข้าเสร็จสิ้น) / ส่งกลับแก้ไข
       review-form.tsx         # client — ช่องคะแนน/ความเห็น (controlled) + ปุ่มสองปุ่มแยกด้วย name="intent"
+      reviewed-panel.tsx      # client — แท็บ "ตรวจแล้ว": สรุป ✓ ตรวจแล้ว แทนฟอร์ม กด "แก้ไขผลตรวจ" ถึงเปิดฟอร์ม
     board/[id]/
       page.tsx                # หน้าบอร์ด (server component ดึงข้อมูลเอง)
       actions.ts              # server actions ของ list/card/label/priority/invite/
@@ -106,7 +109,7 @@ app/
     app-shell/                # sidebar, topbar, nav-link, mobile-nav,
                               # create-board-dialog
     dashboard/                # game-stats, due-cards, task-row, overview-panel,
-                              # weekly-chart, month-progress, board-cards
+                              # weekly-chart, month-progress, board-cards, leaderboard
   generated/prisma/           # Prisma Client ที่ generate ออกมา — ห้าม commit, ห้ามแก้มือ
 
 lib/
@@ -115,6 +118,7 @@ lib/
   board-access.ts             # assertBoardAccess() — เช็คสิทธิ์ owner/member/อาจารย์ ของบอร์ด
   roles.ts                    # effectiveRole() / canTeach() / canManageUsers() + ADMIN_EMAILS (มี unit test)
   notifications.ts            # ตัวเลขบน sidebar (งานรอตรวจ / ผลตรวจที่ยังไม่อ่าน) ห่อ cache()
+  leaderboard.ts              # อันดับเพื่อนร่วมรายวิชาบนหน้าแรก (getMyCourses / getCourseLeaderboard)
   password.ts                 # newPasswordSchema — กติการหัสผ่านเดียวกันทั้งสมัคร/เปลี่ยน/แอดมินตั้ง
   join-code.ts                # สุ่มรหัสเข้าร่วมรายวิชา (ฟังก์ชันบริสุทธิ์ → มี unit test)
   csv.ts                      # toCsv() + BOM + กัน formula injection (ฟังก์ชันบริสุทธิ์ → มี unit test)
@@ -300,6 +304,12 @@ prisma/
   `reviewCardAction` — ถ้าจะเพิ่มทางเข้าใหม่ (เช่น ปุ่มติ๊กเสร็จ) ให้เรียกฟังก์ชันนี้
   ห้ามเขียนกติกาแต้มซ้ำที่อื่น มันรับ `tx` เพื่อให้การย้ายการ์ด + กิจกรรม + แต้ม อยู่ใน transaction เดียว
 - action ที่ให้แต้มต้อง `revalidatePath("/")` ด้วย ไม่งั้นแถบโปรไฟล์บน dashboard ไม่อัปเดต
+- **แผงอันดับในรายวิชา** (`components/dashboard/leaderboard.tsx` + `lib/leaderboard.ts`)
+  คนในอันดับ = เจ้าของ + สมาชิกของบอร์ดในวิชาเดียวกับเรา (ไม่นับอาจารย์ผู้สอน) ไม่ได้อยู่วิชาไหน = ไม่เห็นใคร
+  **จัดอันดับด้วยแต้มที่ได้จากบอร์ดในวิชานั้นเท่านั้น** (ทั้งหมด / 7 วันล่าสุด) เพราะบอร์ดในวิชาต้องผ่าน
+  อาจารย์อนุมัติก่อนได้แต้ม ส่วนบอร์ดส่วนตัวปั๊มแต้มเองได้ — เลเวล/สตรีคที่โชว์ยังมาจากแต้มรวม
+  วิชาที่เลือกใน URL (`?lb=`) ต้องอยู่ในผล `getMyCourses()` เท่านั้น ห้ามรับ courseId จาก URL ตรง ๆ
+  การจัดอันดับเป็นฟังก์ชันบริสุทธิ์ `rankEntries()` ใน `lib/points.ts` (แต้มเท่ากันได้อันดับเดียวกัน 1, 2, 2, 4)
 
 **นิยามของกลุ่มกำหนดส่งมีที่เดียวคือ `dueBucket()` ใน `lib/due.ts`**
 (`overdue` / `today` / `soon` = พรุ่งนี้ถึงอีก 7 วัน / `later`) ที่ไหนจะนับเลขของกลุ่มไหน
@@ -383,6 +393,9 @@ prisma/
   `attachment-upload.tsx` ใช้ ID รายไฟล์ (ไม่ใช้ชื่อ) พร้อมภาพตัวอย่างและ error รายไฟล์
   เมื่ออัปโหลดบางใบล้มเหลวให้ลองใหม่โดยใช้ `cardId`/attachment ID เดิม ไม่สร้างการ์ดซ้ำ
   modal สร้างการ์ดใช้ `busy` กัน Esc/ปิด/กดซ้ำระหว่างบันทึก และยังคงค่าฟอร์มเมื่อผิดพลาด
+- **ปุ่ม + ระหว่างคอลัมน์** อยู่ *ใน* `SortableList` (absolute ยื่นไปกลางช่อง `gap-4`) ไม่ใช่ element แยก
+  ระหว่างคอลัมน์ — ของแทรกใน `SortableContext` ทำให้ `horizontalListSortingStrategy` คำนวณการเลื่อนเพี้ยน
+  ไม่มีทางขวาของคอลัมน์เสร็จสิ้น/คอลัมน์สุดท้าย และซ่อนระหว่างลาก
 - คำสั่งของคอลัมน์ (แก้ไข / เพิ่มคอลัมน์ทางซ้าย-ขวา / ตั้งเป็นคอลัมน์เสร็จสิ้น / ตั้งเป็นคอลัมน์ตรวจสอบ / ลบ)
   อยู่ในเมนู ⋯ ที่ `list-menu.tsx` — แทรกคอลัมน์ส่งแค่ `anchorListId` + `side` ไป
   ตำแหน่งจริงคำนวณที่ `createListAction` ด้วย `insertListPosition()` ห้ามเชื่อตำแหน่งจาก client
@@ -422,6 +435,12 @@ prisma/
 - ดึงข้อมูลใน **Server Component** ด้วย `prisma` ตรง ๆ ไม่มี API route ไม่มี `fetch()` ฝั่ง client
   (`app/api/auth/*` เป็นข้อยกเว้นเดียว เพราะ NextAuth ต้องการ)
 - client component รับข้อมูลผ่าน props เท่านั้น
+- **query ที่ไม่ขึ้นต่อกันให้ยิงพร้อมกันด้วย `Promise.all`** (ดู `board/[id]/page.tsx`, `sidebar.tsx`)
+  ทุก round trip ไป DB มีราคา await ต่อกันเป็นทอดคือหน้าช้าลงเป็นเท่าตัว
+- **`vercel.json` ตั้ง `regions: ["sin1"]` ห้ามลบ** — Neon อยู่ `ap-southeast-1` ค่าเริ่มต้นของ Vercel คือ iad1
+  (สหรัฐฯ) ทำให้ทุก query ข้ามแปซิฟิก ~200ms (วัดได้จาก header `X-Vercel-Id: sin1::iad1::…`)
+  ย้าย DB ไป region อื่นเมื่อไหร่ ต้องย้าย region ของ function ตาม
+- หน้าที่ดึงข้อมูลเยอะควรมี `loading.tsx` ไม่งั้นคลิกแล้วจอนิ่งจนกว่า render เสร็จ
 
 ### Prisma
 

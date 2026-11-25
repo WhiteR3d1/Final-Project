@@ -13,6 +13,9 @@ import { dateKey, isOnTime } from "@/lib/due";
 import { del } from "@vercel/blob";
 import { ActivityType } from "@/app/generated/prisma/enums";
 import { assignmentInputSchema, canDeleteAssignment, diffAssignmentItems } from "@/lib/assignment-rules";
+import { pickExamples, readSplitterSettings, splitterSettingsSchema } from "@/lib/task-splitter-rules";
+import { splitTask, type SplitResult } from "@/lib/task-splitter";
+import type { SplitterSettings } from "@/lib/task-splitter-options";
 import {
   ASSIGNMENT_TX_OPTIONS,
   applyAssignmentEdit,
@@ -363,4 +366,80 @@ export async function exportCourseScoresAction(
   // ชื่อไฟล์ใช้ได้ทุก OS: ตัดอักขระต้องห้ามของ Windows ออก
   const safeName = course.name.replace(/[\\/:*?"<>|]/g, "-").slice(0, 60);
   return { filename: `คะแนน-${safeName}-${dateKey(new Date())}.csv`, csv: toCsv([header, ...rows]) };
+}
+
+const splitDraftSchema = assignmentInputSchema.pick({ title: true, description: true });
+
+/**
+ * ให้ AI แตกงานเป็นงานย่อย — **ไม่เขียน DB** ผลไปเติมในหน้าต่างของอาจารย์ (งานยังเป็นร่างจนกว่าจะกดแจก)
+ * settingsOverride = ปุ่ม "ลองแตกดู" ในหน้าตั้งค่า ที่ใช้ค่าที่ยังไม่ได้บันทึก (ตรวจด้วย schema เดียวกับตอนบันทึก)
+ * เฉพาะอาจารย์เจ้าของวิชา — กันคนอื่นใช้โควตา API ของวิชา
+ */
+export async function splitAssignmentAction(
+  courseId: string,
+  draft: { title: string; description: string; assignmentId?: string },
+  settingsOverride?: unknown
+): Promise<SplitResult> {
+  const course = await ownCourse(courseId);
+  if (!course) return { error: "ไม่พบรายวิชานี้" };
+
+  const task = splitDraftSchema.safeParse({ title: draft?.title ?? "", description: draft?.description ?? "" });
+  if (!task.success) return { error: task.error.issues[0]?.message ?? "กรอกชื่องานก่อน" };
+
+  let settings: SplitterSettings;
+  if (settingsOverride === undefined) {
+    const stored = await prisma.course.findUnique({ where: { id: course.id }, select: { splitterSettings: true } });
+    settings = readSplitterSettings(stored?.splitterSettings);
+  } else {
+    const parsed = splitterSettingsSchema.safeParse(settingsOverride);
+    if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "ค่าตั้งค่าไม่ถูกต้อง" };
+    settings = parsed.data;
+  }
+
+  // งานเก่าของวิชา (รวมร่าง) = สไตล์การแตกงานของอาจารย์ — มีแต่เนื้องาน ไม่มีข้อมูลนักศึกษา
+  const examples = settings.learnFromPast
+    ? pickExamples(
+        await prisma.assignment.findMany({
+          where: { courseId: course.id },
+          orderBy: { createdAt: "desc" },
+          take: 10,
+          select: {
+            id: true,
+            title: true,
+            description: true,
+            createdAt: true,
+            items: { orderBy: { position: "asc" }, select: { content: true } },
+          },
+        }),
+        {
+          id: typeof draft?.assignmentId === "string" ? draft.assignmentId : undefined,
+          title: task.data.title,
+        }
+      )
+    : [];
+
+  return splitTask(task.data, settings, examples);
+}
+
+/** บันทึกค่าปรับจูนตัวแตกงานของวิชา — ข้อมูลมาเป็น JSON ใน payload เหมือนฟอร์มงานที่มอบหมาย */
+export async function saveSplitterSettingsAction(
+  _state: AssignmentFormState,
+  formData: FormData
+): Promise<AssignmentFormState> {
+  const course = await ownCourse(formData.get("courseId"));
+  if (!course) return { error: "ไม่พบรายวิชานี้" };
+
+  const payload = formData.get("payload");
+  let json: unknown;
+  try {
+    json = typeof payload === "string" ? JSON.parse(payload) : undefined;
+  } catch {
+    return { error: "ข้อมูลไม่ถูกต้อง" };
+  }
+  const parsed = splitterSettingsSchema.safeParse(json);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "ค่าตั้งค่าไม่ถูกต้อง" };
+
+  await prisma.course.update({ where: { id: course.id }, data: { splitterSettings: parsed.data } });
+  revalidatePath(`/courses/${course.id}`);
+  return { savedAt: Date.now() };
 }

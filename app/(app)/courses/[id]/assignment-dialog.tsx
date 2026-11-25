@@ -1,10 +1,10 @@
 "use client";
 
-import { useActionState, useRef, useState, type KeyboardEvent } from "react";
+import { useActionState, useRef, useState, useTransition, type KeyboardEvent } from "react";
 import { Modal } from "@/app/components/ui/modal";
 import { SubmitButton } from "@/app/components/ui/buttons";
 import { IconChevronDown, IconPlus, IconTrash } from "@/app/components/ui/icons";
-import { saveAssignmentAction, type AssignmentFormState } from "../actions";
+import { saveAssignmentAction, splitAssignmentAction, type AssignmentFormState } from "../actions";
 
 export type AssignmentDraft = {
   id: string;
@@ -27,11 +27,14 @@ const iconButtonClass =
 export function AssignmentEditorButton({
   courseId,
   assignment,
+  aiReady,
   label,
   className,
 }: {
   courseId: string;
   assignment?: AssignmentDraft;
+  /** ตั้ง TYPHOON_API_KEY แล้วหรือยัง — ไม่มี = ปุ่ม AI กดไม่ได้ */
+  aiReady: boolean;
   label: React.ReactNode;
   className: string;
 }) {
@@ -41,7 +44,14 @@ export function AssignmentEditorButton({
       <button type="button" onClick={() => setOpen(true)} className={className}>
         {label}
       </button>
-      {open && <AssignmentDialog courseId={courseId} assignment={assignment} onClose={() => setOpen(false)} />}
+      {open && (
+        <AssignmentDialog
+          courseId={courseId}
+          assignment={assignment}
+          aiReady={aiReady}
+          onClose={() => setOpen(false)}
+        />
+      )}
     </>
   );
 }
@@ -53,10 +63,12 @@ export function AssignmentEditorButton({
 function AssignmentDialog({
   courseId,
   assignment,
+  aiReady,
   onClose,
 }: {
   courseId: string;
   assignment?: AssignmentDraft;
+  aiReady: boolean;
   onClose: () => void;
 }) {
   const [title, setTitle] = useState(assignment?.title ?? "");
@@ -92,6 +104,37 @@ function AssignmentDialog({
   // Enter ในช่องงานย่อยต้องไม่ส่งฟอร์มทั้งก้อน
   const stopSubmit = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") event.preventDefault();
+  };
+
+  // แตกงานด้วย AI: ได้ผลแล้วแทนที่รายการทันที ไม่มีขั้นยืนยัน (ผู้ใช้เลือกแบบนี้)
+  // แต่เก็บรายการเดิมไว้ให้ "เลิกทำ" ได้ — กันกดพลาดแล้วงานย่อยที่พิมพ์เองหายหมด
+  const [splitting, startSplit] = useTransition();
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiFilled, setAiFilled] = useState(false);
+  const [undoItems, setUndoItems] = useState<ItemRow[] | null>(null);
+  const runSplit = () => {
+    const before = items;
+    setAiError(null);
+    startSplit(async () => {
+      const result = await splitAssignmentAction(courseId, { title, description, assignmentId: assignment?.id });
+      if ("error" in result) {
+        setAiError(result.error);
+        return;
+      }
+      setUndoItems(before.length > 0 ? before : null);
+      setItems(
+        result.items.map((content) => {
+          nextKey.current += 1;
+          return { key: `ai-${nextKey.current}`, content };
+        })
+      );
+      setAiFilled(true);
+    });
+  };
+  const undoSplit = () => {
+    if (undoItems) setItems(undoItems);
+    setUndoItems(null);
+    setAiFilled(false);
   };
 
   // ข้อที่พิมพ์ค้างในช่องเพิ่มแต่ยังไม่กด Enter ก็นับด้วย — ไม่งั้นกดบันทึกแล้วข้อนั้นหายเงียบ ๆ
@@ -160,9 +203,40 @@ function AssignmentDialog({
         </label>
 
         <section className="flex flex-col gap-1.5">
-          <h3 className="text-muted text-xs">
-            งานย่อย {items.length > 0 && `(${items.length} ข้อ)`} — นักศึกษาติ๊กได้ แต่แก้หรือลบไม่ได้
-          </h3>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-muted text-xs">
+              งานย่อย {items.length > 0 && `(${items.length} ข้อ)`} — นักศึกษาติ๊กได้ แต่แก้หรือลบไม่ได้
+            </h3>
+            <button
+              type="button"
+              onClick={runSplit}
+              disabled={!aiReady || !title.trim() || splitting || pending}
+              title={
+                !aiReady
+                  ? "ต้องตั้งค่า TYPHOON_API_KEY ก่อน"
+                  : !title.trim()
+                    ? "กรอกชื่องานก่อน"
+                    : "ให้ AI แตกงานจากชื่องานและโจทย์ แล้วใส่ลงรายการทันที"
+              }
+              className="border-info/40 text-info hover:bg-info/10 rounded-lg border px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {splitting ? "AI กำลังแตกงาน..." : "✨ แตกงานย่อยด้วย AI"}
+            </button>
+          </div>
+          {!aiReady && (
+            <p className="text-muted text-[11px]">ใช้ AI ได้เมื่อผู้ดูแลตั้งค่า TYPHOON_API_KEY แล้ว</p>
+          )}
+          {aiError && <p className="text-danger text-xs">{aiError}</p>}
+          {aiFilled && (
+            <p className="text-muted flex flex-wrap items-center gap-2 text-[11px]">
+              สร้างโดย Typhoon AI — ตรวจก่อนกดแจก
+              {undoItems && (
+                <button type="button" onClick={undoSplit} className="text-text underline">
+                  เลิกทำ (กลับเป็นรายการเดิม)
+                </button>
+              )}
+            </p>
+          )}
           {items.length > 0 && (
             <ol className="flex flex-col gap-1">
               {items.map((row, index) => (
@@ -254,6 +328,8 @@ function AssignmentDialog({
           </button>
           <SubmitButton
             pendingLabel="กำลังบันทึก..."
+            // บันทึกระหว่าง AI ยังตอบไม่เสร็จ = ได้รายการเก่า แล้วผล AI มาถึงตอนหน้าต่างปิดไปแล้ว
+            disabled={splitting}
             className="bg-accent text-accent-ink rounded-lg px-5 py-1.5 text-sm font-medium hover:brightness-110"
           >
             {assignment?.published ? "บันทึกและอัปเดตทุกบอร์ด" : assignment ? "บันทึกร่าง" : "บันทึกเป็นร่าง"}

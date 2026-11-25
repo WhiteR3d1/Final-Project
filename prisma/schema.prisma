@@ -133,6 +133,9 @@ model Course {
   joinCode  String   @unique
   teacherId String
   createdAt DateTime @default(now())
+  // ค่าปรับจูนตัวแตกงานย่อยด้วย AI ของวิชานี้ — null = ค่าเริ่มต้น
+  // เป็น JSON เพราะอ่านที่เดียวผ่าน readSplitterSettings() (lib/task-splitter-rules.ts) เพิ่มตัวปรับได้ไม่ต้อง migrate
+  splitterSettings Json?
 
   teacher     User         @relation("CourseTeacher", fields: [teacherId], references: [id])
   boards      Board[]

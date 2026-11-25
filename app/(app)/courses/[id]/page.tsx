@@ -20,6 +20,12 @@ import {
 } from "../actions";
 import { CsvDownloadButton } from "./csv-download-button";
 import { AssignmentEditorButton } from "./assignment-dialog";
+import { SplitterSettingsButton } from "./splitter-settings-dialog";
+import { readSplitterSettings } from "@/lib/task-splitter-rules";
+import { isSplitterConfigured } from "@/lib/task-splitter";
+
+// Server Action ใช้ timeout ระดับหน้า (docs ของ Next 16: maxDuration) — ปุ่มแตกงานด้วย AI อาจรอ Typhoon หลายวินาที
+export const maxDuration = 60;
 
 const ghostButtonClass =
   "border-line text-muted hover:text-text hover:bg-panel-2 rounded-lg border px-3 py-1.5 text-xs";
@@ -36,6 +42,7 @@ export default async function CoursePage({ params }: { params: Promise<{ id: str
       id: true,
       name: true,
       joinCode: true,
+      splitterSettings: true,
       boards: {
         orderBy: { name: "asc" },
         select: {
@@ -74,6 +81,9 @@ export default async function CoursePage({ params }: { params: Promise<{ id: str
     },
   });
   if (!course) notFound();
+
+  const aiReady = isSplitterConfigured();
+  const splitterSettings = readSplitterSettings(course.splitterSettings);
 
   const totals = course.boards.reduce(
     (sum, board) => {
@@ -123,11 +133,20 @@ export default async function CoursePage({ params }: { params: Promise<{ id: str
         title="งานที่มอบหมาย"
         subtitle="แจกแล้วทุกบอร์ดในวิชาได้การ์ดพร้อมงานย่อย บอร์ดที่ผูกทีหลังได้งานตอนผูก"
         action={
-          <AssignmentEditorButton
-            courseId={course.id}
-            label="+ สร้างงาน"
-            className="bg-accent text-accent-ink rounded-lg px-3 py-1.5 text-xs font-semibold hover:brightness-110"
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <SplitterSettingsButton
+              courseId={course.id}
+              settings={splitterSettings}
+              aiReady={aiReady}
+              className={ghostButtonClass}
+            />
+            <AssignmentEditorButton
+              courseId={course.id}
+              aiReady={aiReady}
+              label="+ สร้างงาน"
+              className="bg-accent text-accent-ink rounded-lg px-3 py-1.5 text-xs font-semibold hover:brightness-110"
+            />
+          </div>
         }
       >
         {course.assignments.length === 0 ? (
@@ -187,6 +206,7 @@ export default async function CoursePage({ params }: { params: Promise<{ id: str
                     )}
                     <AssignmentEditorButton
                       courseId={course.id}
+                      aiReady={aiReady}
                       assignment={{
                         id: assignment.id,
                         title: assignment.title,

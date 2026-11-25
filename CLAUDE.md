@@ -74,7 +74,11 @@ app/
     admin/                    # จัดการผู้ใช้ (แอดมินเท่านั้น): role / ระงับ / ตั้งรหัสใหม่ → "/admin"
     courses/                  # รายวิชาของอาจารย์ → "/courses", "/courses/[id]"
       actions.ts              # สร้าง/ลบวิชา, สุ่มรหัสใหม่, ถอนบอร์ดออก, exportCourseScoresAction (CSV)
+                              # + งานที่มอบหมาย: saveAssignmentAction / publishAssignmentAction / deleteAssignmentAction
       [id]/csv-download-button.tsx # client — รับ string จาก action แล้วสร้างไฟล์ดาวน์โหลดเอง
+      [id]/assignment-dialog.tsx   # client — สร้าง/แก้งานที่มอบหมาย + งานย่อย (controlled, ส่ง JSON ใน payload)
+                              # + ปุ่ม "✨ แตกงานย่อยด้วย AI" (splitAssignmentAction) แทนที่รายการทันที มี "เลิกทำ"
+      [id]/splitter-settings-dialog.tsx # client — ปรับจูนตัวแตกงานของวิชา + "ลองแตกดู" ด้วยค่าที่ยังไม่บันทึก
     my-reviews/               # ผลตรวจของงานฉัน + เคลียร์ตัวเลขแจ้งเตือน → "/my-reviews"
     review/                   # หน้าตรวจงานของอาจารย์ (?tab=pending|done, ?course=, ?board=) → "/review"
       page.tsx                # การ์ดในคอลัมน์ตรวจของบอร์ดในวิชาตัวเอง — ไม่ใช่อาจารย์ = notFound()
@@ -119,6 +123,12 @@ lib/
   roles.ts                    # effectiveRole() / canTeach() / canManageUsers() + ADMIN_EMAILS (มี unit test)
   notifications.ts            # ตัวเลขบน sidebar (งานรอตรวจ / ผลตรวจที่ยังไม่อ่าน) ห่อ cache()
   leaderboard.ts              # อันดับเพื่อนร่วมรายวิชาบนหน้าแรก (getMyCourses / getCourseLeaderboard)
+  assignments.ts              # งานที่มอบหมาย (แตะ DB): distributeAssignments / applyAssignmentEdit / detachAssignmentCards
+  assignment-rules.ts         # schema + กติกาของงานที่มอบหมาย (ฟังก์ชันบริสุทธิ์ → มี unit test, import zod)
+  assignment-locks.ts         # นิยามการล็อกการ์ดงาน — แยกไฟล์เพราะ client ใช้ด้วย (ห้าม import zod ในนี้)
+  task-splitter.ts            # ตัวเรียก AI แตกงานย่อย (Typhoon) — ส่วนที่ผูกกับผู้ให้บริการอยู่ที่นี่ที่เดียว
+  task-splitter-rules.ts      # prompt / parser / ค่าปรับจูน (ฟังก์ชันบริสุทธิ์ → มี unit test, import zod)
+  task-splitter-options.ts    # ตัวเลือกและค่าเริ่มต้นที่หน้าจอใช้ด้วย (ห้าม import zod ในนี้)
   password.ts                 # newPasswordSchema — กติการหัสผ่านเดียวกันทั้งสมัคร/เปลี่ยน/แอดมินตั้ง
   join-code.ts                # สุ่มรหัสเข้าร่วมรายวิชา (ฟังก์ชันบริสุทธิ์ → มี unit test)
   csv.ts                      # toCsv() + BOM + กัน formula injection (ฟังก์ชันบริสุทธิ์ → มี unit test)
@@ -139,6 +149,7 @@ prisma/
   migrations/                 # ประวัติ migration
   seed.ts                     # ข้อมูลตัวอย่าง: นักศึกษา demo@ / อาจารย์ teacher@ / แอดมิน admin@kanban.dev
                               # + รายวิชา "วิชาตัวอย่าง" รหัส KANBAN ที่ผูกบอร์ด Study Plan
+                              # + งานที่มอบหมาย "เครื่องคิดเลขด้วย Python" (แจกแล้ว) พร้อมการ์ดสำเนาบน Study Plan
 ```
 
 ---
@@ -236,6 +247,9 @@ prisma/
 - `ADMIN_EMAILS` — อีเมลแอดมินคั่นด้วย comma (ไม่สนตัวพิมพ์) เป็นแอดมินเสมอ แก้จากหน้าเว็บไม่ได้
   **สร้างบัญชีของอีเมลนี้ไว้ก่อน** (seed สร้าง `admin@kanban.dev` ให้) ไม่งั้นใครสมัครอีเมลนี้ก่อนได้เป็นแอดมิน
   อาจารย์ไม่ได้มาจาก env แล้ว (เลิกใช้ `TEACHER_EMAILS`) — ตั้ง role ที่หน้า `/admin`
+- `TYPHOON_API_KEY` — key ของ Typhoon API (opentyphoon.ai, free tier) สำหรับปุ่มแตกงานย่อยด้วย AI
+  ไม่ใส่ = ปุ่มกดไม่ได้และบอกว่าต้องตั้งค่า ส่วนอื่นใช้ได้ตามปกติ **อยู่ฝั่ง server เท่านั้น** (ส่งไป client แค่ boolean
+  จาก `isSplitterConfigured()`) `TYPHOON_MODEL` เปลี่ยนรุ่นได้ (ค่าเริ่มต้น `typhoon-v2.5-30b-a3b-instruct`)
 
 ---
 
@@ -244,7 +258,8 @@ prisma/
 `User` → `Board` (owner) → `List` → `Card`
 เสริมด้วย `BoardMember` (แชร์บอร์ด), `BoardInvite` (เชิญด้วย token), `BoardShareLink` (ลิงก์ทั่วไป),
 `Label`, `Priority`, `Checklist`/`ChecklistItem`, `Comment`, `Attachment`, `Activity`,
-`PointEvent` (ledger แต้ม), `CardReview` (ผลตรวจของอาจารย์), `Course` (รายวิชา)
+`PointEvent` (ledger แต้ม), `CardReview` (ผลตรวจของอาจารย์), `Course` (รายวิชา),
+`Assignment` / `AssignmentItem` (งานที่อาจารย์มอบหมาย + งานย่อยต้นฉบับ)
 
 จุดที่ต้องรู้:
 
@@ -267,6 +282,36 @@ prisma/
 - **`Board.courseId`** — บอร์ดละ 1 วิชา (`onDelete: SetNull`) **บอร์ดในรายวิชา: ลบบอร์ดไม่ได้,
   ลบการ์ดที่มีผลตรวจไม่ได้, ลบคอลัมน์ที่มีการ์ดแบบนั้นไม่ได้** (กันคะแนนหายจาก CSV ของอาจารย์)
 - **`PointEvent.boardId` เป็น nullable (`onDelete: SetNull`)** — ลบบอร์ดแล้วแต้มยังอยู่ ("ได้แล้วไม่ริบคืน")
+- **ตัวแตกงานย่อยด้วย AI** (`splitAssignmentAction` → `lib/task-splitter.ts`) — อาจารย์เจ้าของวิชาเท่านั้น
+  **ไม่เขียน DB** ผลไปเติมในหน้าต่างสร้างงานซึ่งยังเป็นร่างจนกว่าจะแจก ค่าปรับจูนอยู่ที่ `Course.splitterSettings` (JSON)
+  อ่านผ่าน `readSplitterSettings()` เท่านั้น (ช่องที่เสียใช้ค่าเริ่มต้น) ตรวจค่าที่อาจารย์กรอกด้วย `splitterSettingsSchema`
+  - ปรับจูน = จำนวนข้อ / ความละเอียด / คำสั่งเพิ่มเติม / ส่งงานเก่าของวิชาเป็นตัวอย่าง (few-shot คู่ user/assistant)
+    ไม่ได้ fine-tune โมเดล — prompt อยู่ใน `buildSplitMessages()` ที่เดียว สองเรื่องที่เจอตอนทดสอบกับ Typhoon จริง:
+    คำสั่งเพิ่มเติมต้อง**ย้ำท้ายข้อความสุดท้าย**ด้วย (อยู่แค่ใน system แล้วโมเดลเลียนแบบตัวอย่างแทน) และ
+    `pickExamples()` ต้อง**ตัดงานชื่อเดียวกับงานที่จะแตก** (ไม่งั้น AI ลอกรายการเดิมทั้งชุด ปรับค่าแล้วผลไม่เปลี่ยน)
+  - Typhoon ไม่มี JSON mode → สั่งรูปแบบใน prompt แล้วแกะด้วย `parseSplitResponse()` (ทน code fence / `<think>` /
+    ข้อความนำหน้า) แกะไม่ได้ลองใหม่ 1 รอบ **ต้องตั้ง `max_tokens` เอง** (ค่าเริ่มต้นของ Typhoon แค่ 150 ตัดคำตอบไทยกลางคัน)
+  - **ข้อตกลงของ Typhoon: ข้อความที่ส่งไปอาจถูกใช้พัฒนาโมเดล ห้ามมีข้อมูลส่วนบุคคล** — ส่งได้แค่ชื่องาน/โจทย์/
+    งานย่อยของอาจารย์ ห้ามเพิ่มชื่อหรืออีเมลนักศึกษาเข้า prompt
+  - `courses/[id]/page.tsx` ตั้ง `maxDuration = 60` เพราะ Server Action ใช้ timeout ระดับหน้า และ AI ตอบช้าได้หลายวินาที
+  - จะเปลี่ยนไปใช้ Ollama / Claude / เจ้าอื่น แก้แค่ `callModel()` ใน `lib/task-splitter.ts`
+- **งานที่มอบหมาย (`Assignment`)** — อาจารย์สร้างที่หน้ารายวิชา เป็น **ร่าง** (`publishedAt: null`) จนกว่าจะกด "แจกงาน"
+  แจกแล้วทุกบอร์ดในวิชาได้ **การ์ดสำเนา** (`Card.assignmentId`) ในคอลัมน์ซ้ายสุดที่ไม่ใช่ตรวจ/เสร็จสิ้น พร้อมเช็กลิสต์
+  "งานย่อยจากอาจารย์" (`Checklist.fromAssignment`) ที่แต่ละข้อชี้กลับต้นฉบับ (`ChecklistItem.assignmentItemId`)
+  แจกเป็นบอร์ด ไม่ใช่รายคน — บอร์ดกลุ่มได้การ์ดใบเดียว `createdById` ของสำเนา = อาจารย์
+  - **ทางเข้าเดียวของการแจกคือ `distributeAssignments()`** เรียกจาก `publishAssignmentAction` และ
+    `linkBoardToCourseAction` (บอร์ดที่ผูกทีหลังได้งานที่แจกไปแล้ว) — **ทางเข้าใหม่ที่ทำให้บอร์ดเข้าวิชาต้องเรียกด้วย**
+    มันข้ามบอร์ดที่มีการ์ดของงานนั้นแล้ว จึงเรียกซ้ำ/กดแจกพร้อมกันได้ไม่เกิดการ์ดซ้ำ
+  - อาจารย์แก้งานที่แจกแล้ว → `applyAssignmentEdit()` แก้สำเนาทุกบอร์ดใน transaction เดียว
+    (ชื่อ/คำอธิบาย/กำหนดส่ง, ข้อที่เพิ่ม/ลบ/แก้คำ) **ไม่แตะ `isCompleted`** ติ๊กของนักศึกษาจึงอยู่ครบ
+  - **ล็อก** (นิยามใน `lib/assignment-locks.ts` ใช้ทั้ง action และ UI): นักศึกษาแก้ชื่อ/คำอธิบาย/กำหนดส่งไม่ได้
+    (`updateCardAction` บันทึกแค่ priority — กันเลื่อนวันส่งเองเอาโบนัส), ลบการ์ดไม่ได้, ลบคอลัมน์ที่มีการ์ดงานไม่ได้,
+    เพิ่ม/ลบข้อในเช็กลิสต์ของอาจารย์ไม่ได้ (ติ๊กได้ และสร้างเช็กลิสต์ของตัวเองเพิ่มได้)
+    **action ใหม่ที่แก้การ์ดหรือเช็กลิสต์ต้องเช็คล็อกนี้ด้วย**
+  - ลบงาน: ร่างลบได้เสมอ แจกแล้วลบได้เฉพาะตอนยังไม่มีบอร์ดไหนส่ง/เสร็จ/มีผลตรวจ (`canDeleteAssignment`)
+    และ**ลบการ์ดสำเนาทุกบอร์ดตาม** — เป็นทางเดียวที่การ์ดงานถูกลบได้
+  - FK ทั้งหมดเป็น **`SetNull` ไม่ใช่ Cascade** ลบงาน/ลบวิชาต้องไม่ลากงานของนักศึกษาหายไปเงียบ ๆ
+    ถอนบอร์ดออกจากวิชา/ลบวิชา → `detachAssignmentCards()` การ์ดกลายเป็นการ์ดธรรมดาที่แก้/ลบได้
 - **`User.reviewsSeenAt`** — ผลตรวจที่ `updatedAt` ใหม่กว่านี้ = แจ้งเตือนที่ยังไม่อ่าน (`lib/notifications.ts`)
   หน้า `/my-reviews` ตั้งค่านี้เป็น **เวลาที่ server render หน้า** ไม่ใช่เวลาที่กดเปิด
 - **`Card.submittedById` / `submittedAt`** — ตั้งตอนการ์ด "เข้า" คอลัมน์ตรวจ (`submissionFields()`)

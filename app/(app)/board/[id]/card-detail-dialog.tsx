@@ -7,6 +7,7 @@ import { Chip } from "@/app/components/ui/chip";
 import { ConfirmSubmitButton, SubmitButton } from "@/app/components/ui/buttons";
 import { IconCheck, IconTrash } from "@/app/components/ui/icons";
 import { dueLabel, formatDueThai } from "@/lib/due";
+import { isAssignmentCard, isLockedChecklist, isLockedChecklistItem } from "@/lib/assignment-locks";
 import {
   addChecklistItemAction,
   addCommentAction,
@@ -64,6 +65,17 @@ export function CardDetailDialog({
   const items = card.checklists.flatMap((checklist) => checklist.items);
   const doneItems = items.filter((item) => item.isCompleted).length;
 
+  // การ์ดงานจากอาจารย์: ชื่อ/คำอธิบาย/กำหนดส่ง/งานย่อยของอาจารย์แก้ไม่ได้ และลบการ์ดไม่ได้
+  // (ด่านจริงอยู่ที่ actions.ts — ตรงนี้แค่ไม่โชว์ช่องที่บันทึกไม่ได้)
+  const fromTeacher = isAssignmentCard(card);
+  const fieldsEditable = canEdit && !fromTeacher;
+  const hasTeacherChecklist = card.checklists.some((checklist) => isLockedChecklist(checklist, card));
+  const ownChecklists = card.checklists.filter((checklist) => !isLockedChecklist(checklist, card));
+  // เช็กลิสต์ของอาจารย์ที่ยังไม่มีข้อ (อาจารย์ยังไม่ใส่งานย่อย) ไม่ต้องโชว์หัวข้อเปล่า ๆ
+  const shownChecklists = card.checklists.filter(
+    (checklist) => !isLockedChecklist(checklist, card) || checklist.items.length > 0
+  );
+
   // ปุ่ม "บันทึก" อยู่ที่ footer คู่กับปุ่มลบ แต่ <form> ซ้อนกันไม่ได้ (ปุ่มลบเป็นอีกฟอร์ม)
   // จึงผูกช่องกรอกเข้ากับฟอร์มที่อยู่คนละที่ในเอกสารด้วย attribute form="<id>" ของ HTML
   const editFormId = `card-edit-${card.id}`;
@@ -73,7 +85,7 @@ export function CardDetailDialog({
       <div className="grid grid-cols-1 gap-6 md:grid-cols-[1fr_240px]">
         {/* ---------- คอลัมน์ซ้าย: เนื้อหาการ์ด ---------- */}
         <div className="flex flex-col gap-5">
-          {canEdit ? (
+          {fieldsEditable ? (
             <div className="flex flex-col gap-2">
               <input
                 form={editFormId}
@@ -109,6 +121,12 @@ export function CardDetailDialog({
             </div>
           ) : (
             <div className="flex flex-col gap-2">
+              {fromTeacher && (
+                <p className="flex flex-wrap items-center gap-2">
+                  <Chip tone="info">งานจากอาจารย์</Chip>
+                  <span className="text-muted text-xs">ชื่อ รายละเอียด และกำหนดส่ง อาจารย์เป็นคนกำหนด</span>
+                </p>
+              )}
               <h3 className="text-text text-base font-semibold">{card.title}</h3>
               {card.description ? (
                 <p className="text-muted text-sm whitespace-pre-wrap">{card.description}</p>
@@ -129,20 +147,16 @@ export function CardDetailDialog({
               เช็กลิสต์ {items.length > 0 && `(${doneItems}/${items.length})`}
             </h3>
 
-            {card.checklists.length === 0 ? (
-              canEdit ? (
-                <form action={createChecklistAction}>
-                  <input type="hidden" name="cardId" value={card.id} />
-                  <SubmitButton className="border-line text-muted hover:text-text rounded-lg border border-dashed px-3 py-1.5 text-xs">
-                    + สร้างเช็กลิสต์
-                  </SubmitButton>
-                </form>
-              ) : (
-                <p className="text-muted text-xs">ยังไม่มีเช็กลิสต์</p>
-              )
-            ) : (
-              card.checklists.map((checklist) => (
+            <div className="flex flex-col gap-3">
+              {shownChecklists.map((checklist) => {
+                const locked = isLockedChecklist(checklist, card);
+                return (
                 <div key={checklist.id} className="flex flex-col gap-1">
+                  {hasTeacherChecklist && (
+                    <p className={`text-[11px] font-medium ${locked ? "text-info" : "text-muted"}`}>
+                      {locked ? checklist.title : "เช็กลิสต์ของเรา"}
+                    </p>
+                  )}
                   {checklist.items.map((item) => (
                     <div key={item.id} className="group flex items-center gap-2">
                       {canEdit ? (
@@ -178,7 +192,7 @@ export function CardDetailDialog({
                       >
                         {item.content}
                       </span>
-                      {canEdit && (
+                      {canEdit && !isLockedChecklistItem(item, card) && (
                         <form action={deleteChecklistItemAction}>
                           <input type="hidden" name="itemId" value={item.id} />
                           <SubmitButton
@@ -191,7 +205,7 @@ export function CardDetailDialog({
                       )}
                     </div>
                   ))}
-                  {canEdit && (
+                  {canEdit && !locked && (
                     <form action={addChecklistItemAction} className="mt-1">
                       <input type="hidden" name="checklistId" value={checklist.id} />
                       <input
@@ -204,8 +218,22 @@ export function CardDetailDialog({
                     </form>
                   )}
                 </div>
-              ))
-            )}
+                );
+              })}
+
+              {/* การ์ดงานจากอาจารย์ก็สร้างเช็กลิสต์ของตัวเองเพิ่มได้ (งานย่อยของอาจารย์เพิ่มข้อไม่ได้) */}
+              {canEdit && ownChecklists.length === 0 && (
+                <form action={createChecklistAction}>
+                  <input type="hidden" name="cardId" value={card.id} />
+                  <SubmitButton className="border-line text-muted hover:text-text rounded-lg border border-dashed px-3 py-1.5 text-xs">
+                    {hasTeacherChecklist ? "+ เพิ่มเช็กลิสต์ของเรา" : "+ สร้างเช็กลิสต์"}
+                  </SubmitButton>
+                </form>
+              )}
+              {!canEdit && shownChecklists.length === 0 && (
+                <p className="text-muted text-xs">ยังไม่มีเช็กลิสต์</p>
+              )}
+            </div>
           </section>
 
           {/* ---------- ไฟล์แนบ ---------- */}
@@ -315,7 +343,15 @@ export function CardDetailDialog({
         </aside>
       </div>
 
-      {canEdit && (
+      {canEdit && fromTeacher && (
+      <footer className="border-line mt-6 border-t pt-4">
+        <p className="text-muted text-xs">
+          การ์ดงานจากอาจารย์ลบไม่ได้ — ติ๊กงานย่อย แนบไฟล์ ใส่ผู้รับผิดชอบ แล้วลากเข้าคอลัมน์ตรวจเมื่อทำเสร็จ
+        </p>
+      </footer>
+      )}
+
+      {fieldsEditable && (
       <footer className="border-line mt-6 flex flex-wrap items-center gap-2 border-t pt-4">
         {deleteLocked ? (
           <p className="text-muted mr-auto text-xs">การ์ดที่อาจารย์ตรวจแล้วลบไม่ได้ (คะแนนจะหาย)</p>

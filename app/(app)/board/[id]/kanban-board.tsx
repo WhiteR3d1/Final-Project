@@ -308,7 +308,7 @@ export function KanbanBoard({
                 accent={LIST_ACCENTS[listIndex % LIST_ACCENTS.length]}
                 dragDisabled={dragDisabled}
                 canEdit={canEdit}
-                deleteLocked={inCourse && list.cards.some((card) => card.review)}
+                deleteLocked={inCourse && list.cards.some((card) => card.review || card.assignmentId)}
                 // ปุ่ม + ระหว่างคอลัมน์: มีเฉพาะช่องที่อยู่ระหว่างสองคอลัมน์จริง ไม่มีทางขวาของคอลัมน์เสร็จสิ้น
                 // (อยู่ขวาสุดเสมอ) และซ่อนระหว่างลาก ไม่ให้เกะกะเป้าที่ปล่อย
                 insertAfterLabel={

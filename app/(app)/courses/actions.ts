@@ -10,8 +10,20 @@ import { canTeach } from "@/lib/roles";
 import { generateJoinCode } from "@/lib/join-code";
 import { toCsv } from "@/lib/csv";
 import { dateKey, isOnTime } from "@/lib/due";
+import { del } from "@vercel/blob";
+import { ActivityType } from "@/app/generated/prisma/enums";
+import { assignmentInputSchema, canDeleteAssignment, diffAssignmentItems } from "@/lib/assignment-rules";
+import {
+  ASSIGNMENT_TX_OPTIONS,
+  applyAssignmentEdit,
+  assignmentDistributeSelect,
+  detachAssignmentCards,
+  distributeAssignments,
+} from "@/lib/assignments";
 
 export type CourseFormState = { error?: string } | undefined;
+/** savedAt เปลี่ยนทุกครั้งที่บันทึกสำเร็จ — dialog ใช้ค่านี้ปิดตัวเอง */
+export type AssignmentFormState = { error?: string; savedAt?: number } | undefined;
 
 /** อาจารย์เจ้าของวิชาเท่านั้น — แอดมินก็ดูวิชาของอาจารย์คนอื่นไม่ได้ (เคารพความเป็นส่วนตัวของงานนักศึกษา) */
 async function ownCourse(courseId: FormDataEntryValue | string | null) {
@@ -73,9 +85,13 @@ export async function unlinkBoardAction(formData: FormData) {
   const course = await ownCourse(formData.get("courseId"));
   if (!course || typeof boardId !== "string") return;
 
-  await prisma.board.updateMany({
-    where: { id: boardId, courseId: course.id },
-    data: { courseId: null },
+  await prisma.$transaction(async (tx) => {
+    const unlinked = await tx.board.updateMany({
+      where: { id: boardId, courseId: course.id },
+      data: { courseId: null },
+    });
+    // การ์ดงานของวิชานี้กลายเป็นการ์ดธรรมดา — ไม่งั้นยังล็อกและยังเปลี่ยนตามที่อาจารย์แก้ ทั้งที่ออกจากวิชาแล้ว
+    if (unlinked.count > 0) await detachAssignmentCards(tx, { list: { boardId } });
   });
 
   revalidatePath(`/courses/${course.id}`);
@@ -88,10 +104,176 @@ export async function deleteCourseAction(formData: FormData) {
   const course = await ownCourse(formData.get("courseId"));
   if (!course) return;
 
-  await prisma.course.delete({ where: { id: course.id } });
+  // SetNull ปลดล็อกการ์ดงานให้เองอยู่แล้ว แต่ล้างธง fromAssignment ด้วยให้ข้อมูลไม่ค้างครึ่ง ๆ
+  await prisma.$transaction(async (tx) => {
+    await detachAssignmentCards(tx, { assignment: { courseId: course.id } });
+    await tx.course.delete({ where: { id: course.id } });
+  });
 
   revalidatePath("/", "layout");
   redirect("/courses");
+}
+
+/** หน้าที่โชว์การ์ดงาน: รายวิชา บอร์ดที่มีสำเนา dashboard ปฏิทิน และหน้าตรวจงาน */
+function revalidateAssignment(courseId: string, boardIds: string[]) {
+  revalidatePath(`/courses/${courseId}`);
+  for (const boardId of boardIds) revalidatePath(`/board/${boardId}`);
+  revalidatePath("/");
+  revalidatePath("/calendar");
+  revalidatePath("/review");
+}
+
+/**
+ * สร้าง/แก้งานที่มอบหมาย — ข้อมูลมาเป็น JSON ก้อนเดียวใน payload (งานย่อยเป็น array เรียงลำดับ)
+ * งานที่แจกแล้ว: การ์ดสำเนาทุกบอร์ดเปลี่ยนตามใน transaction เดียวกัน (applyAssignmentEdit)
+ */
+export async function saveAssignmentAction(
+  _state: AssignmentFormState,
+  formData: FormData
+): Promise<AssignmentFormState> {
+  const course = await ownCourse(formData.get("courseId"));
+  if (!course) return { error: "ไม่พบรายวิชานี้" };
+
+  const payload = formData.get("payload");
+  if (typeof payload !== "string") return { error: "ข้อมูลไม่ครบ" };
+  let json: unknown;
+  try {
+    json = JSON.parse(payload);
+  } catch {
+    return { error: "ข้อมูลไม่ถูกต้อง" };
+  }
+  const parsed = assignmentInputSchema.safeParse(json);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "ข้อมูลไม่ถูกต้อง" };
+  const input = parsed.data;
+
+  const assignmentId = formData.get("assignmentId");
+  let boardIds: string[] = [];
+
+  if (typeof assignmentId === "string" && assignmentId) {
+    const existing = await prisma.assignment.findFirst({
+      where: { id: assignmentId, courseId: course.id },
+      select: { id: true, publishedAt: true, items: { select: { id: true, content: true, position: true } } },
+    });
+    if (!existing) return { error: "ไม่พบงานนี้ อาจถูกลบไปแล้ว" };
+
+    const diff = diffAssignmentItems(existing.items, input.items);
+    boardIds = await prisma.$transaction(
+      (tx) => applyAssignmentEdit(tx, existing, input, diff),
+      ASSIGNMENT_TX_OPTIONS
+    );
+  } else {
+    await prisma.assignment.create({
+      data: {
+        courseId: course.id,
+        title: input.title,
+        description: input.description,
+        dueDate: input.dueDate,
+        items: { create: input.items.map((item, index) => ({ content: item.content, position: index + 1 })) },
+      },
+    });
+  }
+
+  revalidateAssignment(course.id, boardIds);
+  return { savedAt: Date.now() };
+}
+
+/** แจกงานร่างให้ทุกบอร์ดในวิชา — บอร์ดที่ผูกทีหลังได้งานตอนผูก (linkBoardToCourseAction) */
+export async function publishAssignmentAction(formData: FormData) {
+  const course = await ownCourse(formData.get("courseId"));
+  const assignmentId = formData.get("assignmentId");
+  if (!course || typeof assignmentId !== "string") return;
+  const teacher = await getCurrentUser();
+
+  const boardIds = await prisma.$transaction(async (tx) => {
+    // เงื่อนไข publishedAt: null = กดแจกพร้อมกันสองแท็บแล้วไม่ได้การ์ดสองชุด
+    const published = await tx.assignment.updateMany({
+      where: { id: assignmentId, courseId: course.id, publishedAt: null },
+      data: { publishedAt: new Date() },
+    });
+    if (published.count === 0) return [];
+
+    const [assignment, boards] = await Promise.all([
+      tx.assignment.findUniqueOrThrow({ where: { id: assignmentId }, select: assignmentDistributeSelect }),
+      tx.board.findMany({ where: { courseId: course.id }, select: { id: true } }),
+    ]);
+    return distributeAssignments(tx, {
+      assignments: [assignment],
+      boardIds: boards.map((board) => board.id),
+      teacher,
+    });
+  }, ASSIGNMENT_TX_OPTIONS);
+
+  revalidateAssignment(course.id, boardIds);
+}
+
+/**
+ * ลบงาน — ร่างลบได้เสมอ งานที่แจกแล้วลบได้เฉพาะตอนยังไม่มีบอร์ดไหนส่ง (canDeleteAssignment)
+ * และลบการ์ดสำเนาออกจากทุกบอร์ดด้วย (ไว้แก้ตอนแจกผิด) — ทางเดียวที่การ์ดงานถูกลบได้
+ */
+export async function deleteAssignmentAction(formData: FormData) {
+  const course = await ownCourse(formData.get("courseId"));
+  const assignmentId = formData.get("assignmentId");
+  if (!course || typeof assignmentId !== "string") return;
+  const teacher = await getCurrentUser();
+
+  const result = await prisma.$transaction(async (tx) => {
+    const assignment = await tx.assignment.findFirst({
+      where: { id: assignmentId, courseId: course.id },
+      select: {
+        id: true,
+        title: true,
+        publishedAt: true,
+        cards: {
+          select: {
+            submittedAt: true,
+            completedAt: true,
+            review: { select: { status: true } },
+            list: { select: { boardId: true } },
+          },
+        },
+      },
+    });
+    if (!assignment) return null;
+    const copies = assignment.cards.map((card) => ({
+      submittedAt: card.submittedAt,
+      completedAt: card.completedAt,
+      reviewStatus: card.review?.status ?? null,
+    }));
+    // เช็คใน transaction — หน้าที่เปิดค้างไว้อาจยังโชว์ปุ่มลบ ทั้งที่นักศึกษาเพิ่งส่งงาน
+    if (!canDeleteAssignment(assignment, copies)) return null;
+
+    const attachments = await tx.attachment.findMany({
+      where: { card: { assignmentId: assignment.id }, blobPathname: { not: null } },
+      select: { blobPathname: true },
+    });
+    await tx.card.deleteMany({ where: { assignmentId: assignment.id } });
+    await tx.assignment.delete({ where: { id: assignment.id } });
+
+    const boardIds = [...new Set(assignment.cards.map((card) => card.list.boardId))];
+    if (boardIds.length > 0) {
+      await tx.activity.createMany({
+        data: boardIds.map((boardId) => ({
+          boardId,
+          userId: teacher.id,
+          type: ActivityType.CARD_DELETED,
+          message: `${teacher.name ?? teacher.email} removed assignment "${assignment.title}"`,
+        })),
+      });
+    }
+    return { boardIds, blobs: attachments.flatMap((attachment) => attachment.blobPathname ?? []) };
+  }, ASSIGNMENT_TX_OPTIONS);
+  if (!result) return;
+
+  // ลบไฟล์หลัง transaction สำเร็จเท่านั้น — ล้มตรงนี้แค่ไฟล์ค้างใน Blob ข้อมูลใน DB ถูกต้องแล้ว
+  if (result.blobs.length > 0) {
+    try {
+      await del(result.blobs);
+    } catch (error) {
+      console.error("deleteAssignmentAction: ลบไฟล์ใน Blob ไม่สำเร็จ", error);
+    }
+  }
+
+  revalidateAssignment(course.id, result.boardIds);
 }
 
 const STATUS_LABEL = {
@@ -125,6 +307,7 @@ export async function exportCourseScoresAction(
       title: true,
       dueDate: true,
       submittedAt: true,
+      assignment: { select: { title: true } },
       list: { select: { name: true, isReviewList: true, board: { select: { name: true } } } },
       submittedBy: people,
       createdBy: people,
@@ -136,7 +319,8 @@ export async function exportCourseScoresAction(
   const name = (user: { name: string | null; email: string }) => user.name ?? user.email;
 
   const rows = cards.map((card) => {
-    const submitter = card.submittedBy ?? card.createdBy;
+    // การ์ดงานจากอาจารย์ createdBy = อาจารย์ — ยังไม่มีใครส่งต้องเว้นว่าง ไม่ใช่โชว์ว่าอาจารย์เป็นผู้ส่ง
+    const submitter = card.submittedBy ?? (card.assignment ? null : card.createdBy);
     // อยู่ในคอลัมน์ตรวจ = รอตรวจ แม้จะเคยถูกส่งกลับแก้ไขมาก่อนแล้วส่งใหม่
     // เคยส่งแต่นักศึกษาลากออกเองก่อนอาจารย์ตรวจ = ถือว่ายังไม่ส่ง
     const status = card.list.isReviewList ? "PENDING" : (card.review?.status ?? "NOT_SUBMITTED");
@@ -144,8 +328,10 @@ export async function exportCourseScoresAction(
       card.list.board.name,
       card.list.name,
       card.title,
-      name(submitter),
-      submitter.email,
+      // ว่าง = การ์ดที่นักศึกษาสร้างเอง
+      card.assignment?.title ?? null,
+      submitter ? name(submitter) : null,
+      submitter?.email ?? null,
       card.assignees.map((assignee) => name(assignee.user)).join(", "),
       STATUS_LABEL[status],
       card.review?.status === "APPROVED" ? card.review.score : null,
@@ -161,6 +347,7 @@ export async function exportCourseScoresAction(
     "บอร์ด",
     "คอลัมน์",
     "การ์ด",
+    "งานที่มอบหมาย",
     "ผู้ส่ง",
     "อีเมลผู้ส่ง",
     "ผู้รับผิดชอบ",

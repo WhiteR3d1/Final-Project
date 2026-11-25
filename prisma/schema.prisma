@@ -134,8 +134,40 @@ model Course {
   teacherId String
   createdAt DateTime @default(now())
 
-  teacher User    @relation("CourseTeacher", fields: [teacherId], references: [id])
-  boards  Board[]
+  teacher     User         @relation("CourseTeacher", fields: [teacherId], references: [id])
+  boards      Board[]
+  assignments Assignment[]
+}
+
+// งานที่อาจารย์มอบหมาย — แจกแล้วทุกบอร์ดในวิชาได้การ์ดสำเนา (Card.assignmentId) พร้อมเช็กลิสต์งานย่อย
+// แก้ที่นี่แล้วสำเนาทุกบอร์ดเปลี่ยนตาม (lib/assignments.ts)
+model Assignment {
+  id          String    @id @default(cuid())
+  courseId    String
+  title       String
+  description String?
+  dueDate     DateTime?
+  // null = ร่าง ยังไม่แจก / มีค่า = แจกแล้ว (กลับเป็นร่างไม่ได้)
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  course Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  items  AssignmentItem[]
+  cards  Card[]
+
+  @@index([courseId])
+}
+
+// งานย่อยต้นฉบับ — ChecklistItem ของสำเนาชี้กลับมาด้วย assignmentItemId
+model AssignmentItem {
+  id           String @id @default(cuid())
+  assignmentId String
+  content      String
+  position     Float
+
+  assignment     Assignment      @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  checklistItems ChecklistItem[]
 }
 
 model List {
@@ -169,10 +201,14 @@ model Card {
   // คนที่ลากการ์ดเข้าคอลัมน์ตรวจล่าสุด — แต้มตอนอาจารย์อนุมัติต้องไปที่คนนี้ ไม่ใช่อาจารย์
   submittedById String?
   submittedAt   DateTime?
+  // สำเนาของงานที่อาจารย์มอบหมาย — มีค่า = ชื่อ/คำอธิบาย/กำหนดส่งเป็นของอาจารย์ และลบการ์ดไม่ได้
+  // SetNull: ลบงาน/ลบวิชาต้องไม่ลากงานของนักศึกษาหายไปด้วย (ลบสำเนาทำใน deleteAssignmentAction เท่านั้น)
+  assignmentId  String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
   list        List           @relation(fields: [listId], references: [id], onDelete: Cascade)
+  assignment  Assignment?    @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
   createdBy   User           @relation("CardCreator", fields: [createdById], references: [id])
   submittedBy User?          @relation("CardSubmitter", fields: [submittedById], references: [id], onDelete: SetNull)
   review      CardReview?
@@ -184,6 +220,8 @@ model Card {
   activities  Activity[]
   pointEvents PointEvent[]
   attachments Attachment[]
+
+  @@index([assignmentId])
 }
 
 model Label {
@@ -231,10 +269,12 @@ model CardAssignee {
 }
 
 model Checklist {
-  id       String @id @default(cuid())
-  cardId   String
-  title    String
-  position Float
+  id             String  @id @default(cuid())
+  cardId         String
+  title          String
+  position       Float
+  // เช็กลิสต์ "งานย่อยจากอาจารย์" — ล็อกเมื่อการ์ดยังผูกกับงานอยู่ (card.assignmentId)
+  fromAssignment Boolean @default(false)
 
   card  Card            @relation(fields: [cardId], references: [id], onDelete: Cascade)
   items ChecklistItem[]
@@ -246,8 +286,11 @@ model ChecklistItem {
   content     String
   position    Float
   isCompleted Boolean @default(false)
+  // งานย่อยของอาจารย์ — นักศึกษาติ๊กได้ แต่แก้/ลบไม่ได้ อาจารย์แก้ต้นฉบับแล้วข้อนี้เปลี่ยนตาม
+  assignmentItemId String?
 
-  checklist Checklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+  checklist      Checklist       @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+  assignmentItem AssignmentItem? @relation(fields: [assignmentItemId], references: [id], onDelete: SetNull)
 }
 
 enum AttachmentType {

@@ -9,8 +9,17 @@ import { Chip } from "@/app/components/ui/chip";
 import { displayName } from "@/app/components/ui/avatar";
 import { ConfirmSubmitButton } from "@/app/components/ui/buttons";
 import { publicUserSelect } from "../../board/[id]/types";
-import { deleteCourseAction, regenerateJoinCodeAction, unlinkBoardAction } from "../actions";
+import { formatDueThai } from "@/lib/due";
+import { canDeleteAssignment, summarizeAssignmentCopies } from "@/lib/assignment-rules";
+import {
+  deleteAssignmentAction,
+  deleteCourseAction,
+  publishAssignmentAction,
+  regenerateJoinCodeAction,
+  unlinkBoardAction,
+} from "../actions";
 import { CsvDownloadButton } from "./csv-download-button";
+import { AssignmentEditorButton } from "./assignment-dialog";
 
 const ghostButtonClass =
   "border-line text-muted hover:text-text hover:bg-panel-2 rounded-lg border px-3 py-1.5 text-xs";
@@ -36,6 +45,30 @@ export default async function CoursePage({ params }: { params: Promise<{ id: str
           owner: { select: publicUserSelect },
           _count: { select: { members: true } },
           lists: { select: { isDoneList: true, isReviewList: true, _count: { select: { cards: true } } } },
+        },
+      },
+      assignments: {
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          dueDate: true,
+          publishedAt: true,
+          items: { orderBy: { position: "asc" }, select: { id: true, content: true } },
+          // สำเนาในแต่ละบอร์ด — นับเฉพาะงานย่อยของอาจารย์ ไม่นับเช็กลิสต์ที่นักศึกษาเพิ่มเอง
+          cards: {
+            select: {
+              submittedAt: true,
+              completedAt: true,
+              list: { select: { isReviewList: true } },
+              review: { select: { status: true } },
+              checklists: {
+                where: { fromAssignment: true },
+                select: { items: { where: { assignmentItemId: { not: null } }, select: { isCompleted: true } } },
+              },
+            },
+          },
         },
       },
     },
@@ -84,6 +117,134 @@ export default async function CoursePage({ params }: { params: Promise<{ id: str
             </ConfirmSubmitButton>
           </form>
         </div>
+      </Panel>
+
+      <Panel
+        title="งานที่มอบหมาย"
+        subtitle="แจกแล้วทุกบอร์ดในวิชาได้การ์ดพร้อมงานย่อย บอร์ดที่ผูกทีหลังได้งานตอนผูก"
+        action={
+          <AssignmentEditorButton
+            courseId={course.id}
+            label="+ สร้างงาน"
+            className="bg-accent text-accent-ink rounded-lg px-3 py-1.5 text-xs font-semibold hover:brightness-110"
+          />
+        }
+      >
+        {course.assignments.length === 0 ? (
+          <p className="text-muted py-4 text-center text-sm">
+            ยังไม่มีงาน — สร้างงานพร้อมงานย่อย แล้วกดแจกให้ทุกบอร์ดในวิชา
+          </p>
+        ) : (
+          <ul className="flex flex-col">
+            {course.assignments.map((assignment) => {
+              const copies = assignment.cards.map((card) => ({
+                inReviewList: card.list.isReviewList,
+                reviewStatus: card.review?.status ?? null,
+                submittedAt: card.submittedAt,
+                completedAt: card.completedAt,
+                items: card.checklists.flatMap((checklist) => checklist.items),
+              }));
+              const summary = summarizeAssignmentCopies(copies);
+              const published = assignment.publishedAt !== null;
+              const deletable = canDeleteAssignment(assignment, copies);
+              const progressText = [
+                `ส่งแล้ว ${summary.submitted}/${summary.boards} บอร์ด`,
+                `รอตรวจ ${summary.pending}`,
+                `อนุมัติ ${summary.approved}`,
+                summary.changesRequested > 0 ? `ส่งกลับแก้ ${summary.changesRequested}` : null,
+                summary.progress !== null ? `งานย่อยเสร็จเฉลี่ย ${summary.progress}%` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ");
+
+              return (
+                <li
+                  key={assignment.id}
+                  className="border-line flex flex-wrap items-start gap-3 border-b py-3 last:border-b-0"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-text text-sm font-medium break-words">{assignment.title}</span>
+                      {published ? <Chip tone="accent">แจกแล้ว</Chip> : <Chip tone="neutral">ร่าง</Chip>}
+                      {assignment.dueDate && (
+                        <span className="text-muted text-xs">ส่ง {formatDueThai(assignment.dueDate, true)}</span>
+                      )}
+                    </div>
+                    <p className="text-muted mt-0.5 text-xs">
+                      งานย่อย {assignment.items.length} ข้อ ·{" "}
+                      {published ? progressText : "ยังไม่แจก นักศึกษายังไม่เห็น"}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    {published && summary.submitted > 0 && (
+                      <Link
+                        href={`/review?course=${course.id}&assignment=${assignment.id}`}
+                        className={ghostButtonClass}
+                      >
+                        ดูงานที่ส่ง
+                      </Link>
+                    )}
+                    <AssignmentEditorButton
+                      courseId={course.id}
+                      assignment={{
+                        id: assignment.id,
+                        title: assignment.title,
+                        description: assignment.description ?? "",
+                        dueDate: assignment.dueDate ? assignment.dueDate.toISOString().slice(0, 10) : "",
+                        published,
+                        items: assignment.items,
+                      }}
+                      label="แก้ไข"
+                      className={ghostButtonClass}
+                    />
+                    {!published && (
+                      <form action={publishAssignmentAction}>
+                        <input type="hidden" name="courseId" value={course.id} />
+                        <input type="hidden" name="assignmentId" value={assignment.id} />
+                        <ConfirmSubmitButton
+                          confirmLabel={
+                            course.boards.length > 0
+                              ? `แจกให้ ${course.boards.length} บอร์ด — กดอีกครั้ง`
+                              : "ยังไม่มีบอร์ด (ผูกทีหลังได้งานเอง) — กดอีกครั้ง"
+                          }
+                          className="bg-accent text-accent-ink rounded-lg px-3 py-1.5 text-xs font-semibold hover:brightness-110"
+                          confirmClassName="bg-warn text-warn-ink rounded-lg px-3 py-1.5 text-xs font-semibold"
+                        >
+                          แจกงาน
+                        </ConfirmSubmitButton>
+                      </form>
+                    )}
+                    {deletable ? (
+                      <form action={deleteAssignmentAction}>
+                        <input type="hidden" name="courseId" value={course.id} />
+                        <input type="hidden" name="assignmentId" value={assignment.id} />
+                        <ConfirmSubmitButton
+                          confirmLabel={
+                            published && summary.boards > 0
+                              ? `ลบการ์ดจาก ${summary.boards} บอร์ดด้วย — กดอีกครั้ง`
+                              : "กดอีกครั้งเพื่อลบ"
+                          }
+                          className={`${ghostButtonClass} hover:text-danger`}
+                          confirmClassName="bg-danger text-danger-ink rounded-lg px-3 py-1.5 text-xs font-medium"
+                        >
+                          ลบ
+                        </ConfirmSubmitButton>
+                      </form>
+                    ) : (
+                      <span
+                        className="text-muted text-[11px]"
+                        title="มีบอร์ดส่งงานนี้แล้ว ลบแล้วงานและคะแนนของนักศึกษาจะหาย"
+                      >
+                        ลบไม่ได้ (มีบอร์ดส่งแล้ว)
+                      </span>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </Panel>
 
       <Panel title="บอร์ดในรายวิชา">

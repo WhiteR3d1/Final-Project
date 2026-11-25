@@ -142,6 +142,67 @@ async function main() {
     }),
   ]);
 
+  // งานที่อาจารย์มอบหมาย (แจกแล้ว) + การ์ดสำเนาบนบอร์ด Study Plan
+  // เขียนตรงนี้เองเพราะ lib/assignments.ts เป็น server-only (import นอก Next ไม่ได้)
+  // id คงที่ทั้งหมด รันซ้ำไม่เกิดของซ้ำ และ update: {} = ไม่ทับสิ่งที่อาจารย์/นักศึกษาแก้ไปแล้ว
+  const calculatorSteps = [
+    "รับตัวเลข 2 ตัวจากผู้ใช้",
+    "ให้ผู้ใช้เลือกเครื่องหมาย + − × ÷",
+    "เขียนฟังก์ชันคำนวณแยกตามเครื่องหมาย",
+    "กันการหารด้วยศูนย์",
+    "กันผู้ใช้พิมพ์สิ่งที่ไม่ใช่ตัวเลข",
+    "วนถามใหม่จนกว่าผู้ใช้จะพิมพ์ออก",
+    "เขียนเทสต์และ README แล้วแนบลิงก์ repo",
+  ];
+  const assignment = await prisma.assignment.upsert({
+    where: { id: "seed-assignment-1" },
+    update: {},
+    create: {
+      id: "seed-assignment-1",
+      courseId: course.id,
+      title: "เครื่องคิดเลขด้วย Python",
+      description: "เขียนโปรแกรมเครื่องคิดเลขแบบ command line ด้วย Python ทำตามงานย่อยให้ครบแล้วลากเข้า \"กำลังตรวจสอบ\"",
+      dueDate: daysFromNow(7),
+      publishedAt: new Date(),
+      items: {
+        create: calculatorSteps.map((content, index) => ({
+          id: `seed-assignment-item-${index + 1}`,
+          content,
+          position: index + 1,
+        })),
+      },
+    },
+  });
+  await prisma.card.upsert({
+    where: { id: "seed-card-assignment-1" },
+    update: {},
+    create: {
+      id: "seed-card-assignment-1",
+      title: assignment.title,
+      description: assignment.description,
+      dueDate: assignment.dueDate,
+      listId: todo.id,
+      position: 0,
+      createdById: teacher.id,
+      assignmentId: assignment.id,
+      checklists: {
+        create: {
+          title: "งานย่อยจากอาจารย์",
+          position: 0,
+          fromAssignment: true,
+          items: {
+            create: calculatorSteps.map((content, index) => ({
+              content,
+              position: index + 1,
+              isCompleted: index < 2,
+              assignmentItemId: `seed-assignment-item-${index + 1}`,
+            })),
+          },
+        },
+      },
+    },
+  });
+
   const existingActivity = await prisma.activity.findFirst({
     where: { boardId: board.id, type: ActivityType.BOARD_CREATED },
   });
@@ -165,6 +226,7 @@ async function main() {
   });
   console.log(`Login with: ${user.email} / ${DEMO_PASSWORD}`);
   console.log(`Teacher: ${teacher.email} / ${TEACHER_PASSWORD} — รายวิชา "${course.name}" รหัส ${course.joinCode}`);
+  console.log(`Assignment: "${assignment.title}" (${calculatorSteps.length} งานย่อย) แจกให้บอร์ด ${board.name} แล้ว`);
   console.log(`Admin: ${admin.email} / ${ADMIN_PASSWORD} (ต้องอยู่ใน ADMIN_EMAILS ของ .env)`);
 }
 

@@ -4,6 +4,7 @@ import { useRef } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { DUE_BUCKET_STYLE, dueBucket, dueLabel, formatDueThai } from "@/lib/due";
+import { isAssignmentCard } from "@/lib/assignment-locks";
 import { AvatarStack } from "@/app/components/ui/avatar";
 import { Chip } from "@/app/components/ui/chip";
 import {
@@ -120,6 +121,11 @@ export function BoardCard({
       )}
 
       <div className="mt-2 ml-6 flex flex-wrap items-center gap-1.5">
+        {isAssignmentCard(card) && (
+          <Chip tone="info" title="งานที่อาจารย์มอบหมาย — ชื่อ กำหนดส่ง และงานย่อยแก้ได้เฉพาะอาจารย์">
+            งานจากอาจารย์
+          </Chip>
+        )}
         {card.isCompleted && (
           <Chip tone="accent">
             <IconCheck size={11} /> เสร็จแล้ว

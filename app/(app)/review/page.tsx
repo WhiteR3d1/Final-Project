@@ -28,6 +28,7 @@ const reviewCardSelect = {
   description: true,
   dueDate: true,
   submittedAt: true,
+  assignment: { select: { title: true } },
   list: {
     select: {
       name: true,
@@ -57,13 +58,18 @@ type ReviewCard = Prisma.CardGetPayload<{ select: typeof reviewCardSelect }>;
 export default async function ReviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string; course?: string; board?: string }>;
+  searchParams: Promise<{ tab?: string; course?: string; board?: string; assignment?: string }>;
 }) {
   const user = await getCurrentUser();
   // ไม่บอกว่ามีหน้านี้อยู่ เหมือนบอร์ดที่ไม่มีสิทธิ์เข้า
   if (!canTeach(user.role)) notFound();
 
-  const { tab: rawTab, course: courseFilter, board: boardFilter } = await searchParams;
+  const {
+    tab: rawTab,
+    course: courseFilter,
+    board: boardFilter,
+    assignment: assignmentFilter,
+  } = await searchParams;
   const tab = rawTab === "done" ? "done" : "pending";
 
   // เฉพาะวิชาที่ตัวเองสอน — ตัวกรองจาก URL เลือกได้แค่ในชุดนี้ จะใส่ id ของวิชาคนอื่นมาก็ไม่มีผล
@@ -74,11 +80,22 @@ export default async function ReviewPage({
       id: true,
       name: true,
       boards: { orderBy: { name: "asc" }, select: { id: true, name: true, color: true } },
+      assignments: {
+        where: { publishedAt: { not: null } },
+        orderBy: { publishedAt: "asc" },
+        select: { id: true, title: true },
+      },
     },
   });
   const activeCourse = courseFilter ? courses.find((course) => course.id === courseFilter) : undefined;
   const boards = activeCourse ? activeCourse.boards : courses.flatMap((course) => course.boards);
   const activeBoard = boardFilter ? boards.find((board) => board.id === boardFilter) : undefined;
+  const assignments = activeCourse ? activeCourse.assignments : courses.flatMap((course) => course.assignments);
+  const activeAssignment = assignmentFilter
+    ? assignments.find((assignment) => assignment.id === assignmentFilter)
+    : undefined;
+  // กรองงานที่ระดับการ์ด (ไม่ใช่บอร์ด) — ดูการ์ด "เครื่องคิดเลข" ของทุกบอร์ดพร้อมกัน
+  const assignmentScope = activeAssignment ? { assignmentId: activeAssignment.id } : {};
 
   const inScope = {
     course: { teacherId: user.id },
@@ -86,8 +103,12 @@ export default async function ReviewPage({
     ...(activeBoard ? { id: activeBoard.id } : {}),
   } satisfies Prisma.BoardWhereInput;
 
-  const pendingWhere = { list: { isReviewList: true, board: inScope } } satisfies Prisma.CardWhereInput;
+  const pendingWhere = {
+    ...assignmentScope,
+    list: { isReviewList: true, board: inScope },
+  } satisfies Prisma.CardWhereInput;
   const doneWhere = {
+    ...assignmentScope,
     review: { isNot: null },
     list: { isReviewList: false, board: inScope },
   } satisfies Prisma.CardWhereInput;
@@ -107,10 +128,11 @@ export default async function ReviewPage({
     }),
   ]);
 
-  const href = (filters: { tab?: string; course?: string; board?: string }) => {
+  const href = (filters: { tab?: string; course?: string; board?: string; assignment?: string }) => {
     const params = new URLSearchParams({ tab: filters.tab ?? tab });
     if (filters.course) params.set("course", filters.course);
     if (filters.board) params.set("board", filters.board);
+    if (filters.assignment) params.set("assignment", filters.assignment);
     return `/review?${params}`;
   };
   const chipClass = (active: boolean) =>
@@ -135,7 +157,12 @@ export default async function ReviewPage({
           ].map((item) => (
             <Link
               key={item.key}
-              href={href({ tab: item.key, course: activeCourse?.id, board: activeBoard?.id })}
+              href={href({
+                tab: item.key,
+                course: activeCourse?.id,
+                board: activeBoard?.id,
+                assignment: activeAssignment?.id,
+              })}
               aria-current={tab === item.key ? "page" : undefined}
               className={`rounded-lg px-3 py-1.5 ${
                 tab === item.key ? "bg-panel text-text font-semibold shadow-sm" : "text-muted hover:text-text"
@@ -150,7 +177,7 @@ export default async function ReviewPage({
       {courses.length > 0 && (
         <div className="flex flex-col gap-1.5">
           <div className="flex flex-wrap items-center gap-1.5">
-            <Link href={href({})} className={chipClass(!activeCourse && !activeBoard)}>
+            <Link href={href({})} className={chipClass(!activeCourse && !activeBoard && !activeAssignment)}>
               ทุกวิชา
             </Link>
             {courses.map((course) => (
@@ -164,11 +191,31 @@ export default async function ReviewPage({
               {boards.map((board) => (
                 <Link
                   key={board.id}
-                  href={href({ course: activeCourse?.id, board: board.id })}
+                  href={href({ course: activeCourse?.id, board: board.id, assignment: activeAssignment?.id })}
                   className={chipClass(activeBoard?.id === board.id)}
                 >
                   <span className="h-2 w-2 rounded-full" style={{ backgroundColor: boardColor(board) }} />
                   {board.name}
+                </Link>
+              ))}
+            </div>
+          )}
+          {assignments.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-muted text-xs">งาน:</span>
+              <Link
+                href={href({ course: activeCourse?.id, board: activeBoard?.id })}
+                className={chipClass(!activeAssignment)}
+              >
+                ทุกงาน
+              </Link>
+              {assignments.map((assignment) => (
+                <Link
+                  key={assignment.id}
+                  href={href({ course: activeCourse?.id, board: activeBoard?.id, assignment: assignment.id })}
+                  className={chipClass(activeAssignment?.id === assignment.id)}
+                >
+                  {assignment.title}
                 </Link>
               ))}
             </div>
@@ -231,6 +278,7 @@ function ReviewCardItem({ card }: { card: ReviewCard }) {
             {board.name}
           </Link>
           <span className="text-muted text-xs">· {card.list.name}</span>
+          {card.assignment && <Chip tone="info">งาน: {card.assignment.title}</Chip>}
         </div>
 
         <h2 className="text-text text-base font-semibold break-words">{card.title}</h2>

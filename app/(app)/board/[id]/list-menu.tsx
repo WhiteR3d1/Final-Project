@@ -86,7 +86,7 @@ export function ListMenu({
 
             {deleteLocked ? (
               <p className="text-muted px-2.5 py-1.5 text-[11px] leading-4">
-                ลบคอลัมน์นี้ไม่ได้ — มีการ์ดที่อาจารย์ตรวจแล้ว (คะแนนจะหาย)
+                ลบคอลัมน์นี้ไม่ได้ — มีการ์ดที่อาจารย์ตรวจแล้วหรือการ์ดงานจากอาจารย์ ย้ายการ์ดเหล่านั้นออกก่อน
               </p>
             ) : (
               <form action={deleteListAction}>

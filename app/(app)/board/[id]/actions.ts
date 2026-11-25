@@ -14,6 +14,8 @@ import { syncCardCompletion } from "@/lib/card-completion";
 import { insertListPosition, isDoneListName, positionBetween } from "@/lib/drag";
 import { normalizeJoinCode } from "@/lib/join-code";
 import type { Prisma } from "@/app/generated/prisma/client";
+import { isAssignmentCard, isLockedChecklist, isLockedChecklistItem } from "@/lib/assignment-locks";
+import { ASSIGNMENT_TX_OPTIONS, assignmentDistributeSelect, distributeAssignments } from "@/lib/assignments";
 import {
   MAX_ATTACHMENT_BYTES,
   formatFileSize,
@@ -118,7 +120,15 @@ export async function deleteListAction(formData: FormData) {
   const access = await assertBoardAccess(list.boardId, user);
   if (!access?.canEdit) return;
   // บอร์ดในรายวิชา: ลบคอลัมน์ = การ์ดและผลตรวจข้างในหายตาม คะแนนจะหายจาก CSV ของอาจารย์
-  if (access.courseId && (await prisma.cardReview.count({ where: { card: { listId } } })) > 0) return;
+  // การ์ดงานจากอาจารย์ก็เช่นกัน (ลบทีละใบไม่ได้ ลบทั้งคอลัมน์ก็ต้องไม่ได้)
+  if (
+    access.courseId &&
+    (await prisma.card.count({
+      where: { listId, OR: [{ review: { isNot: null } }, { assignmentId: { not: null } }] },
+    })) > 0
+  ) {
+    return;
+  }
 
   await prisma.list.delete({ where: { id: listId } });
 
@@ -401,13 +411,16 @@ export async function updateCardAction(formData: FormData) {
 
   await prisma.card.update({
     where: { id: cardId },
-    data: {
-      title: title.trim(),
-      description:
-        typeof description === "string" && description.trim() ? description.trim() : null,
-      priorityId: nextPriorityId,
-      dueDate: typeof dueDate === "string" && dueDate ? new Date(dueDate) : null,
-    },
+    // การ์ดงานจากอาจารย์: ชื่อ/คำอธิบาย/กำหนดส่งเป็นของอาจารย์ — ไม่งั้นเลื่อนวันส่งเองเพื่อเอาโบนัสทันกำหนดได้
+    data: isAssignmentCard(card)
+      ? { priorityId: nextPriorityId }
+      : {
+          title: title.trim(),
+          description:
+            typeof description === "string" && description.trim() ? description.trim() : null,
+          priorityId: nextPriorityId,
+          dueDate: typeof dueDate === "string" && dueDate ? new Date(dueDate) : null,
+        },
   });
 
   await prisma.activity.create({
@@ -468,6 +481,8 @@ export async function deleteCardAction(formData: FormData) {
   if (!access?.canEdit) return;
   // บอร์ดในรายวิชา: การ์ดที่อาจารย์ตรวจแล้วลบไม่ได้ ไม่งั้นคะแนนหายจาก CSV ของอาจารย์
   if (access.courseId && card.review) return;
+  // การ์ดงานจากอาจารย์ลบได้ทางเดียวคืออาจารย์ลบงาน (deleteAssignmentAction)
+  if (isAssignmentCard(card)) return;
 
   await prisma.card.delete({ where: { id: cardId } });
 
@@ -531,6 +546,8 @@ export async function addChecklistItemAction(formData: FormData) {
   const boardId = checklist.card.list.boardId;
   const access = await assertBoardAccess(boardId, user);
   if (!access?.canEdit) return;
+  // งานย่อยของอาจารย์เพิ่มได้ที่หน้ารายวิชาเท่านั้น — นักศึกษาสร้างเช็กลิสต์ของตัวเองแทน
+  if (isLockedChecklist(checklist, checklist.card)) return;
 
   const lastItem = await prisma.checklistItem.findFirst({
     where: { checklistId },
@@ -585,6 +602,7 @@ export async function deleteChecklistItemAction(formData: FormData) {
   const boardId = item.checklist.card.list.boardId;
   const access = await assertBoardAccess(boardId, user);
   if (!access?.canEdit) return;
+  if (isLockedChecklistItem(item, item.checklist.card)) return;
 
   await prisma.checklistItem.delete({ where: { id: itemId } });
 
@@ -1247,7 +1265,7 @@ export async function linkBoardToCourseAction(
 
   const course = await prisma.course.findUnique({
     where: { joinCode: normalizeJoinCode(rawCode) },
-    select: { id: true },
+    select: { id: true, teacher: { select: { id: true, name: true, email: true } } },
   });
   if (!course) return { error: "ไม่พบรายวิชานี้ ตรวจรหัสอีกครั้ง" };
 
@@ -1282,7 +1300,15 @@ export async function linkBoardToCourseAction(
         data: { boardId, name: "กำลังตรวจสอบ", isReviewList: true, position: insertListPosition(lists) },
       });
     }
-  });
+
+    // งานที่อาจารย์แจกไปแล้วก่อนบอร์ดนี้เข้าวิชา — เก่าก่อน งานใหม่สุดจะได้อยู่บนสุด
+    const assignments = await tx.assignment.findMany({
+      where: { courseId: course.id, publishedAt: { not: null } },
+      orderBy: { publishedAt: "asc" },
+      select: assignmentDistributeSelect,
+    });
+    await distributeAssignments(tx, { assignments, boardIds: [boardId], teacher: course.teacher });
+  }, ASSIGNMENT_TX_OPTIONS);
 
   revalidatePath(`/board/${boardId}`);
   revalidatePath("/review");
